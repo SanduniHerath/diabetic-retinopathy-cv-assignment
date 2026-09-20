@@ -1,0 +1,75 @@
+# Python / PyCache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Data & Datasets
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/*
+!data/**/.gitkeep
+!data/.gitkeep
+*.zip
+*.tar.gz
+*.csv
+*.parquet
+
+# Model Checkpoints & Artifacts
+*.pth
+*.pt
+*.h5
+*.keras
+*.ckpt
+*.onnx
+*.tflite
+models/
+checkpoints/
+saved_models/
+
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Reports outputs (heavy PDFs/video drafts if placed locally)
+reports/*.pdf
+!reports/.gitkeep
