@@ -85,6 +85,36 @@ See [`reports/dataset_overview/summary.md`](reports/dataset_overview/summary.md)
 
 ---
 
+## Phase 2 – Image Preprocessing Pipeline
+
+The preprocessing pipeline in `src/preprocessing.py` standardizes and enhances raw fundus images through 5 deterministic, reproducible steps:
+
+1. **Circular Crop (Ben Graham method)**: Removes black camera borders and isolates the retinal disc.
+2. **Contrast Enhancement (CLAHE on LAB L-channel)**: Enhances microaneurysms and deep lesions locally without hue shift or highlight blowout (`clipLimit=2.0`, `tileGridSize=(8,8)`).
+3. **Noise Reduction (Gaussian Blur)**: Suppresses sensor and compression artifacts (`kernel=(3,3)`) prior to sharpening.
+4. **Edge Enhancement (Unsharp Masking)**: Sharpens vessel branching and lesion boundaries (`sigma=10`, `amount=1.5`) while preserving photorealistic RGB color profiles.
+5. **Resizing & Normalization**: Resizes to 224×224 (`INTER_AREA`) and normalizes with ImageNet channel statistics (`mean=[0.485, 0.456, 0.406]`, `std=[0.229, 0.224, 0.225]`).
+
+### How to Run
+Generate quality metrics, pipeline stage panels, and histogram comparisons on sample images:
+```bash
+python src/preprocessing.py --report-only --samples 2
+```
+
+Preprocess the entire organized dataset to `.npy` tensors and display `.png` files:
+```bash
+python src/preprocessing.py
+```
+
+### Quantitative Improvements
+- **Sharpness (Laplacian Variance)**: **+707.3%** average improvement across all stages.
+- **Contrast Redistribution (Histogram MAD)**: Mean absolute deviation of **0.00343** confirms significant intensity equalization across low-contrast regions.
+
+See [`reports/preprocessing_examples/summary.md`](reports/preprocessing_examples/summary.md) for full clinical rationales, mathematical formulas, and sample visualizations.
+
+---
+
 ## GitHub Repository
 https://github.com/SanduniHerath/diabetic-retinopathy-cv-assignment  
 *(Repository must be public for submission)*
+
