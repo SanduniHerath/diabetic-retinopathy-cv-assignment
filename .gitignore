@@ -70,6 +70,13 @@ saved_models/
 .DS_Store
 Thumbs.db
 
-# Reports outputs (heavy PDFs/video drafts if placed locally)
+# Reports outputs
+# Track generated charts/montages; ignore raw sample image copies
 reports/*.pdf
 !reports/.gitkeep
+# Ignore individual raw sample copies (No_DR_1_xxx.png style)
+reports/dataset_overview/No_DR_*.png
+reports/dataset_overview/Mild_*.png
+reports/dataset_overview/Moderate_*.png
+reports/dataset_overview/Severe_*.png
+reports/dataset_overview/Proliferative_DR_*.png
