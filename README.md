@@ -13,7 +13,11 @@ diabetic-retinopathy-cv-assignment/
 ├── data/
 │   ├── raw/              # Original downloaded dataset (NOT tracked by git)
 │   ├── organized/        # Class-separated images (NOT tracked by git)
-│   └── split/            # Stratified Train/Val/Test split (NOT tracked by git)
+│   └── split/            # Stratified splits (NOT tracked by git)
+│       ├── train/            # 2,563 original training images
+│       ├── train_augmented/  # 6,408 balanced augmented training images
+│       ├── val/              # 550 validation images (never augmented)
+│       └── test/             # 549 test images (never augmented)
 ├── docs/                 # Assignment brief and lecturer checklist
 ├── notebooks/            # Exploratory and experimental Jupyter notebooks
 ├── reports/              # Figures, charts, and markdown summaries
@@ -133,6 +137,71 @@ python src/preprocessing.py
 - **Contrast Redistribution (Histogram MAD)**: Mean absolute deviation of **0.00343** confirms significant intensity equalization across low-contrast regions.
 
 See [`reports/preprocessing_examples/summary.md`](reports/preprocessing_examples/summary.md) for full clinical rationales, mathematical formulas, and sample visualizations.
+
+---
+
+## Phase 3 – Data Augmentation & Class Balancing (`src/augmentation.py`)
+
+`src/augmentation.py` applies a reproducible, clinically justified augmentation pipeline **exclusively to the training split** (`data/split/train/`) and writes the balanced output to `data/split/train_augmented/`. The validation and test sets are **never touched**.
+
+### Why Training-Only Augmentation?
+
+Augmenting val/test would constitute **data leakage**: augmented images are synthetic near-duplicates of their source. If near-duplicates of training images appear in the evaluation sets, reported metrics inflate and do not reflect real-world clinical performance. The test set simulates a clinician's camera — always one natural, unaugmented photograph per patient eye.
+
+### Augmentation Techniques
+
+| Technique | Parameters | Clinical Rationale |
+|:----------|:-----------|:------------------|
+| Horizontal Flip | p = 0.5 | Left/right eyes are mirror images; doubles anatomical diversity |
+| Vertical Flip | p = 0.5 | Handheld cameras can be tilted to any orientation; anatomically plausible |
+| Random Rotation | ±30°, mirror padding | Simulates patient head-tilt and camera misalignment in field screening |
+| Random Zoom / Crop | Scale 0.80–1.00 | Simulates focal-length variation across camera models |
+| Brightness & Contrast Jitter | HSV-V ±30; ×0.85–1.15 | Hue preserved (clinically important colours); simulates illumination variation |
+| Gaussian Blur | p = 0.30, 3×3 kernel | Simulates minor camera defocus at low probability |
+
+### Flip Decision: Both H + V Flips (Literature Evidence)
+
+Both flips are applied following the majority consensus in DR classification literature:
+- Haque et al. 2021 [arXiv:2108.04358](https://arxiv.org/abs/2108.04358) — H+V flips on APTOS fundus images
+- Al-Antary et al. 2025 [arXiv:2604.23079](https://arxiv.org/abs/2604.23079) — H+V flips, QWK=0.934 on APTOS 2019
+- Huang et al. 2021 [arXiv:2110.14160](https://arxiv.org/abs/2110.14160) — Ablation confirms H+V flips beneficial for DR grading
+- Hannan et al. 2025 [arXiv:2507.19199](https://arxiv.org/abs/2507.19199) — H+V flips on APTOS 2019 with rotation
+
+Iqbal et al. 2024 [arXiv:2408.06784](https://arxiv.org/abs/2408.06784) use horizontal-only flips, but for *exudate segmentation* — a pixel-level task where vertical orientation relative to the disc matters. For our *classification* objective, both flips are appropriate.
+
+### Class Balancing (Training Set Only)
+
+The training split has a **9.36× imbalance ratio** (No_DR: 1,264 vs Severe: 135 images). Differential multipliers reduce this to **1.15×**:
+
+| Class | Train Before | Multiplier | Train After |
+|:------|:-----------:|:----------:|:-----------:|
+| No_DR | 1,264 | ×1 | 1,264 |
+| Mild | 259 | ×5 | 1,295 |
+| Moderate | 699 | ×2 | 1,398 |
+| Severe | 135 | **×9** | 1,215 |
+| Proliferative_DR | 206 | ×6 | 1,236 |
+| **Total** | **2,563** | | **6,408** |
+
+Severe receives ×9 (highest) because it is both the rarest class and the most clinically critical — misclassifying Severe as a lower grade risks preventable blindness.
+
+### How to Run
+
+```bash
+# Dry-run (prints before/after tables, no files written):
+python src/augmentation.py --dry-run
+
+# Full pipeline (generates 6,408 training images):
+python src/augmentation.py
+
+# Report-only (demo strips + chart only):
+python src/augmentation.py --report-only --samples 3
+```
+
+- **Seed**: `RANDOM_SEED = 42` — fully reproducible output
+- **Output**: `data/split/train_augmented/[class]/`
+- **Never reads from**: `data/split/val/` or `data/split/test/`
+
+See [`reports/augmentation_examples/summary.md`](reports/augmentation_examples/summary.md) for the full clinical justification, flip decision citation table, and before/after distribution charts.
 
 ---
 
