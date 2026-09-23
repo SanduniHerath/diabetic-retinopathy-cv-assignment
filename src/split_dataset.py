@@ -131,8 +131,8 @@ def compute_stratified_split(
     rng.shuffle(shuffled_files)
 
     # Compute exact count targets with rounding
-    n_train = int(round(total * train_ratio))
-    n_val = int(round(total * val_ratio))
+    n_train = round(total * train_ratio)
+    n_val = round(total * val_ratio)
     n_test = total - n_train - n_val
 
     # Adjust if slight rounding discrepancy occurs
