@@ -12,7 +12,8 @@ diabetic-retinopathy-cv-assignment/
 ├── app/                  # Interactive Streamlit/Gradio UI prototype
 ├── data/
 │   ├── raw/              # Original downloaded dataset (NOT tracked by git)
-│   └── organized/        # Class-separated images (NOT tracked by git)
+│   ├── organized/        # Class-separated images (NOT tracked by git)
+│   └── split/            # Stratified Train/Val/Test split (NOT tracked by git)
 ├── docs/                 # Assignment brief and lecturer checklist
 ├── notebooks/            # Exploratory and experimental Jupyter notebooks
 ├── reports/              # Figures, charts, and markdown summaries
@@ -37,7 +38,7 @@ https://www.kaggle.com/competitions/aptos2019-blindness-detection/data
    unzip data/raw/aptos2019-blindness-detection.zip -d data/raw/
    ```
 
-> **Note:** Raw data and organised images are excluded from version control via `.gitignore`.  
+> **Note:** Raw data, organized images, and split directories are excluded from version control via `.gitignore`.  
 > You must download the dataset manually before running any scripts.
 
 ### Dataset Summary
@@ -61,9 +62,10 @@ The imbalance ratio (dominant/minority) is ~9.4×. Addressed via augmentation, c
 
 ---
 
-## Phase 1 – Dataset Organisation
+## Phase 1 – Dataset Organisation & Stratified Split
 
-The script `src/organize_dataset.py` reads `data/raw/train_images/train.csv` and copies each image into a named class folder:
+### 1. Dataset Organisation (`src/organize_dataset.py`)
+Reads `data/raw/train_images/train.csv` and copies each image into a named class folder:
 
 ```
 data/organized/
@@ -79,9 +81,29 @@ Run it with:
 python src/organize_dataset.py
 ```
 
-This structure is compatible with `torchvision.datasets.ImageFolder` and `tf.keras.preprocessing.image_dataset_from_directory` for seamless data loading in later phases.
+### 2. Stratified Train / Validation / Test Split (`src/split_dataset.py`)
+To prevent data leakage and evaluate generalization on imbalanced clinical stages, `src/split_dataset.py` creates a **70% / 15% / 15%** stratified split (`RANDOM_SEED = 42`) preserving class distributions across all sets:
 
-See [`reports/dataset_overview/summary.md`](reports/dataset_overview/summary.md) for the full dataset analysis and ethical discussion.
+```
+data/split/
+    train/              # 2,563 images (70.0%)
+        No_DR/ (1,264) | Mild/ (259) | Moderate/ (699) | Severe/ (135) | Proliferative_DR/ (206)
+    val/                # 550 images (15.0%)
+        No_DR/ (271)   | Mild/ (56)  | Moderate/ (150) | Severe/ (29)  | Proliferative_DR/ (44)
+    test/               # 549 images (15.0%)
+        No_DR/ (270)   | Mild/ (55)  | Moderate/ (150) | Severe/ (29)  | Proliferative_DR/ (45)
+```
+
+Run the split script:
+```bash
+python src/split_dataset.py
+```
+
+- **Zero Data Leakage**: Enforces $\text{Train} \cap \text{Val} = \emptyset$, $\text{Train} \cap \text{Test} = \emptyset$, $\text{Val} \cap \text{Test} = \emptyset$.
+- **Manifest**: Full mapping stored at `reports/dataset_overview/split_manifest.csv`.
+- **ImageFolder Compatible**: Both `data/organized/` and `data/split/{train,val,test}/` are directly compatible with PyTorch `ImageFolder` and TensorFlow `image_dataset_from_directory`.
+
+See [`reports/dataset_overview/summary.md`](reports/dataset_overview/summary.md) for the full dataset analysis, split visualizations, and ethical discussion.
 
 ---
 

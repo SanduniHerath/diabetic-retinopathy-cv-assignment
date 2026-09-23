@@ -131,7 +131,7 @@ def organize_images(df: pd.DataFrame, images_dir: str, class_dirs: dict) -> dict
     missing = []
 
     total = len(df)
-    for i, row in df.iterrows():
+    for idx, (_, row) in enumerate(df.iterrows(), start=1):
         id_code = row["id_code"]
         label = int(row["diagnosis"])
         src = os.path.join(images_dir, f"{id_code}.png")
@@ -146,8 +146,8 @@ def organize_images(df: pd.DataFrame, images_dir: str, class_dirs: dict) -> dict
         counts[label] += 1
 
         # Progress indicator every 500 images
-        if (i + 1) % 500 == 0:
-            print(f"  Organised {i + 1}/{total} images ...")
+        if idx % 500 == 0:
+            print(f"  Organised {idx}/{total} images ...")
 
     return {"counts": counts, "missing": missing}
 
@@ -204,7 +204,7 @@ def save_sample_images(df: pd.DataFrame, images_dir: str, sample_out: str,
             random_state=42,
         ).reset_index(drop=True)
 
-        for col, row in class_df.iterrows():
+        for col, (_, row) in enumerate(class_df.iterrows()):
             id_code = row["id_code"]
             src = os.path.join(images_dir, f"{id_code}.png")
 
