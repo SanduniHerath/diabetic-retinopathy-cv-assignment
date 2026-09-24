@@ -172,7 +172,7 @@ def build_dataloaders(
         class_weights = 1.0 / (class_counts + 1e-6)       # Inverse frequency
         sample_weights = class_weights[targets]
         sampler = WeightedRandomSampler(
-            weights=torch.tensor(sample_weights, dtype=torch.float64),
+            weights=sample_weights.tolist(),
             num_samples=len(train_dataset),
             replacement=True,
         )
@@ -456,7 +456,7 @@ def run_staged_training(
         weight_decay=weight_decay,
     )
     scheduler_s1 = ReduceLROnPlateau(
-        optimiser_s1, mode="min", factor=lr_factor, patience=lr_patience, verbose=True
+        optimiser_s1, mode="min", factor=lr_factor, patience=lr_patience
     )
 
     no_improve_s1 = 0
@@ -518,7 +518,7 @@ def run_staged_training(
         weight_decay=weight_decay,
     )
     scheduler_s2 = ReduceLROnPlateau(
-        optimiser_s2, mode="min", factor=lr_factor, patience=lr_patience, verbose=True
+        optimiser_s2, mode="min", factor=lr_factor, patience=lr_patience
     )
 
     no_improve_s2 = 0
@@ -649,7 +649,7 @@ def run_hyperparameter_search(
                 stage2_lr=cfg["s2_lr"],
                 stage2_epochs=12,
                 stage2_patience=5,
-                stage2_unfreeze_blocks=cfg["unfreeze"],
+                stage2_unfreeze_blocks=int(cfg["unfreeze"]),
                 weight_decay=cfg["wd"],
                 run_tag=run_tag,
             )

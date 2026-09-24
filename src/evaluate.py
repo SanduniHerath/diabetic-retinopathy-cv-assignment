@@ -83,7 +83,7 @@ def compute_per_class_metrics(
     """
     n = cm.shape[0]
     total_samples = cm.sum()
-    per_class: List[Dict[str, float]] = []
+    per_class: List[Dict[str, Any]] = []
 
     for i in range(n):
         tp = cm[i, i]
