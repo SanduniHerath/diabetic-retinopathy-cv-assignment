@@ -205,6 +205,47 @@ See [`reports/augmentation_examples/summary.md`](reports/augmentation_examples/s
 
 ---
 
+## Phase 4 – CNN Architecture with Transfer Learning & Grad-CAM (`src/model.py`, `src/gradcam.py`)
+
+Phase 4 defines a transfer learning architecture in **PyTorch** designed to run seamlessly in **Google Colab** (free-tier T4 GPU) and local environments using portable, relative-path logic.
+
+### Unified 5-Class Model: Dual Assignment Deliverables
+A single model satisfies both core requirements simultaneously from one forward pass:
+- **Binary DR Presence (Screening)**: $P(\text{DR Positive}) = 1.0 - p_0 = \sum_{k=1}^4 p_k$. If $P(\text{DR}) \ge 0.50$, flags DR present.
+- **Disease Stage Grading (Severity)**: $\hat{y} = \arg\max_{i \in \{0..4\}} p_i$ (0: No_DR, 1: Mild, 2: Moderate, 3: Severe, 4: Proliferative_DR).
+
+### Architecture Highlights
+- **Primary Backbone**: **EfficientNet-B0** (pretrained on ImageNet-1K).
+  - *Parameters*: **4,337,281 (~4.3M)** — 5.5× lighter than ResNet-50.
+  - *Squeeze-and-Excitation (SE)*: Dynamically recalibrates feature maps to highlight tiny retinal lesions (microaneurysms, hemorrhages) against homogeneous reddish retinal backgrounds.
+  - *Colab T4 Efficiency*: ~2.5–3.5 min/epoch with batch size 32; avoids OOM errors on free-tier 15GB VRAM limits.
+- **Alternative Baseline**: **ResNet-50** (24,034,373 parameters) supported via `--backbone resnet50`.
+- **Classification Head**:
+  - `AdaptiveAvgPool2d((1, 1))` $\to$ `Flatten()`
+  - `Dropout(p=0.4)` $\to$ `Linear(1280, 256)` $\to$ `BatchNorm1d(256)` $\to$ `SiLU()`
+  - `Dropout(p=0.2)` $\to$ `Linear(256, 5)` $\to$ Raw unnormalized logits.
+
+### Staged Freezing Scheme
+1. **Stage 1 (Feature Extraction / Head Warmup)**: Backbone frozen (4,007,548 parameters frozen; 329,733 trainable, 7.6%). Prevents destroying pretrained ImageNet weights while training random head.
+2. **Stage 2 (Differential Fine-Tuning)**: Top 2 MBConv blocks unfrozen (1,459,125 trainable parameters, 33.6%). Adapts high-level semantics to retinal pathology at reduced learning rate (`5e-5`).
+
+### Grad-CAM Visual Explainability (`src/gradcam.py`)
+- Computes gradient-weighted class activation maps targeting the last convolutional layer (`features[-1]`).
+- Overlays a heatmap on RGB fundus images to clinically verify that the network attends to pathological lesions rather than camera artifacts or borders.
+
+### How to Run Locally or in Colab
+```bash
+# EfficientNet-B0 architecture summary and verification:
+python src/model.py --backbone efficientnet_b0
+
+# ResNet-50 baseline comparison:
+python src/model.py --backbone resnet50 --output-summary reports/model_architecture/model_summary_resnet50.txt
+```
+
+See [`reports/model_architecture/summary.md`](reports/model_architecture/summary.md) for the complete design justification, parameter audits, and the Phase 5 hyperparameter tuning plan.
+
+---
+
 ## GitHub Repository
 https://github.com/SanduniHerath/diabetic-retinopathy-cv-assignment  
 *(Repository must be public for submission)*
