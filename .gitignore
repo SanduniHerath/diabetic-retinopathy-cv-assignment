@@ -43,6 +43,7 @@ data/*
 *.zip
 *.tar.gz
 *.csv
+!reports/**/*.csv
 *.parquet
 
 # Model Checkpoints & Artifacts

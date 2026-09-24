@@ -58,6 +58,40 @@ Running `src/organize_dataset.py` yields the following distribution:
 
 ---
 
+## Stratified Train / Validation / Test Dataset Split (`src/split_dataset.py`)
+
+To guarantee unbiased model evaluation, valid hyperparameter tuning, and zero data leakage, the organised dataset was partitioned into **Train (70%)**, **Validation (15%)**, and **Test (15%)** sets using stratified random sampling (`RANDOM_SEED = 42`).
+
+### Methodological & Clinical Justification
+
+1. **Stratification Under Severe Imbalance**:
+   Given that No_DR constitutes 49.3% while Severe constitutes only 5.3% of the dataset, an unstratified split risks significant sampling bias where minority stages are severely underrepresented or omitted from test or validation sets. Stratified splitting enforces identical class proportions across all three subsets.
+2. **Distinct Partition Roles**:
+   - **Training Set (70% — 2,563 images)**: Provides diverse retinal fundus representations for feature learning and acts as the foundation for subsequent targeted data augmentation (Phase 3).
+   - **Validation Set (15% — 550 images)**: Serves as an independent checkpointing set for hyperparameter tuning, learning rate scheduling, and early stopping to prevent overfitting.
+   - **Test Set (15% — 549 images)**: Acts as a strictly held-out clinical gold standard evaluated only once at the conclusion of training, simulating real-world patient screening.
+3. **Strict Zero-Leakage Guarantee**:
+   Partition integrity is mathematically enforced using set-intersection assertions:
+   $$\text{Train} \cap \text{Val} = \emptyset, \quad \text{Train} \cap \text{Test} = \emptyset, \quad \text{Val} \cap \text{Test} = \emptyset$$
+   All 3,662 unique fundus images are mutually exclusively accounted for ($2,563 + 550 + 549 = 3,662$).
+
+### Exact Per-Class Split Counts
+
+| Label | Class Name | Total Count | Train (70%) | Validation (15%) | Test (15%) | Train % | Val % | Test % |
+|:-----:|:-----------|:-----------:|:-----------:|:----------------:|:----------:|:-------:|:-----:|:------:|
+| 0 | No_DR | 1,805 | 1,264 | 271 | 270 | 70.0% | 15.0% | 15.0% |
+| 1 | Mild | 370 | 259 | 56 | 55 | 70.0% | 15.1% | 14.9% |
+| 2 | Moderate | 999 | 699 | 150 | 150 | 70.0% | 15.0% | 15.0% |
+| 3 | Severe | 193 | 135 | 29 | 29 | 69.9% | 15.0% | 15.0% |
+| 4 | Proliferative_DR | 295 | 206 | 44 | 45 | 69.8% | 14.9% | 15.3% |
+| **—** | **Total** | **3,662** | **2,563** | **550** | **549** | **70.0%** | **15.0%** | **15.0%** |
+
+![Stratified Split Distribution](split_distribution.png)
+
+An exhaustive split manifest mapping each anonymised patient image (`id_code`) to its diagnosis and assigned split is preserved in [`reports/dataset_overview/split_manifest.csv`](split_manifest.csv).
+
+---
+
 ## Sample Images Per Class
 
 The sample montage (`sample_montage.png`) shows 3 representative fundus photographs from each DR stage.  Key visual differences:
