@@ -15,6 +15,17 @@ Implements a two-stage transfer learning curriculum:
     - Lower learning rate (1e-4) to avoid catastrophic forgetting of ImageNet features.
     - Runs for `stage2_epochs` epochs (default 20) or until EarlyStopping fires.
 
+Preprocessing Integration (Phase 2 pipeline):
+  Every image -- training, validation, AND test -- passes through the full
+  deterministic preprocessing pipeline from src/preprocessing.py BEFORE
+  any augmentation or normalisation:
+    1. Ben Graham circular crop   (removes black camera borders)
+    2. CLAHE contrast enhancement (boosts microaneurysms / haemorrhages)
+    3. Gaussian blur denoise      (suppresses sensor noise before sharpening)
+    4. Unsharp mask               (sharpens vessel boundaries & lesion edges)
+  Augmentation (RandomFlip, ColorJitter, etc.) is applied ON TOP of
+  the preprocessed image -- training data only.
+
 Overfitting Prevention Techniques:
   - Dropout (p=0.4 / p=0.2) in classification head (built into DRTransferModel).
   - Staged freezing: backbone weights preserved during head warm-up.
@@ -54,6 +65,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torchvision import datasets, transforms
+from PIL import Image
 
 # ---------------------------------------------------------------------------
 # Portable sys.path setup: works from repo root, src/, or Google Colab
@@ -66,6 +78,22 @@ for _p in (_FILE_DIR, _REPO_ROOT):
 
 from model import build_model, CLASS_NAMES, NUM_CLASSES  # noqa: E402
 
+# Phase 2 preprocessing functions (OpenCV-based, deterministic)
+from preprocessing import (  # noqa: E402
+    circular_crop,
+    apply_clahe,
+    apply_noise_removal,
+    apply_unsharp_mask,
+)
+
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
+    print('[WARNING] cv2 not found -- preprocessing skipped. pip install opencv-python')
+
+
 
 # ===========================================================================
 # 1. Constants & defaults
@@ -75,8 +103,43 @@ MEAN: Tuple[float, ...] = (0.485, 0.456, 0.406)   # ImageNet statistics
 STD:  Tuple[float, ...] = (0.229, 0.224, 0.225)
 
 
+
 # ===========================================================================
-# 2. Data Transforms
+# 1b. PreprocessingTransform -- bridges OpenCV pipeline into torchvision
+# ===========================================================================
+class PreprocessingTransform:
+    """
+    Wraps the Phase 2 OpenCV preprocessing pipeline as a torchvision-
+    compatible callable.  Accepts a PIL Image, runs four deterministic
+    enhancement steps, and returns a PIL Image for the rest of the pipeline.
+
+    Order: circular_crop -> CLAHE -> GaussianBlur -> UnsharpMask
+
+    Applied as the VERY FIRST step in both train and val/test Compose
+    pipelines, before any resize, augmentation, or normalisation.  This
+    guarantees the model always trains and is evaluated on quality-enhanced
+    images with identical preprocessing -- no train/test mismatch.
+    """
+
+    def __call__(self, pil_img):
+        if not _CV2_AVAILABLE:
+            return pil_img
+        img_bgr = cv2.cvtColor(np.array(pil_img, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+        img_bgr = circular_crop(img_bgr)       # Step 1: remove black border
+        img_bgr = apply_clahe(img_bgr)         # Step 2: CLAHE contrast (L-channel)
+        img_bgr = apply_noise_removal(img_bgr) # Step 3: Gaussian denoise
+        img_bgr = apply_unsharp_mask(img_bgr)  # Step 4: unsharp mask edge enhance
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(img_rgb)
+
+    def __repr__(self):
+        return ("PreprocessingTransform("
+                "circular_crop->CLAHE(clip=2.0,tile=8x8)->"
+                "GaussianBlur(3x3)->UnsharpMask(sigma=10,amount=1.5))")
+
+
+# ===========================================================================
+# 2. Data Transforms  (preprocessing first, then augmentation / normalise)
 # ===========================================================================
 def get_train_transforms(image_size: int = IMAGE_SIZE) -> transforms.Compose:
     """
@@ -86,6 +149,7 @@ def get_train_transforms(image_size: int = IMAGE_SIZE) -> transforms.Compose:
           mini-batch without risk of introducing augmented leakage into val/test.
     """
     return transforms.Compose([
+        PreprocessingTransform(),                           # Phase 2: crop->CLAHE->denoise->sharpen
         transforms.Resize((image_size + 32, image_size + 32)),   # Slightly oversized for crop
         transforms.RandomCrop(image_size),
         transforms.RandomHorizontalFlip(),
@@ -103,6 +167,7 @@ def get_val_transforms(image_size: int = IMAGE_SIZE) -> transforms.Compose:
     No stochastic augmentation is applied to validation or test sets.
     """
     return transforms.Compose([
+        PreprocessingTransform(),          # Phase 2 pipeline -- same as training, no randomness
         transforms.Resize((image_size, image_size)),
         transforms.CenterCrop(image_size),
         transforms.ToTensor(),

@@ -4,7 +4,16 @@ evaluate.py
 Phase 5 - Model Evaluation & Performance Analysis
 Diabetic Retinopathy Stage Detection (Computer Vision Assignment)
 
-Generates a comprehensive suite of evaluation artefacts from the best checkpoint:
+Generates a comprehensive suite of evaluation artefacts from the best checkpoint.
+
+Preprocessing Note:
+  Test images are processed through the full Phase 2 preprocessing pipeline
+  (circular crop, CLAHE, Gaussian denoise, unsharp mask) via get_val_transforms()
+  imported from train.py.  NO augmentation is applied at test time -- only the
+  deterministic quality-enhancement steps.  This ensures test-time distribution
+  matches training-time distribution exactly.
+
+Generates a comprehensive suite of evaluation artefacts:
 
   1. Per-class metrics table: Accuracy, Precision, Recall, F1-Score, Support
   2. Weighted & macro-average metrics
@@ -438,6 +447,9 @@ def run_evaluation(
     if not test_dir.exists():
         raise FileNotFoundError(f"Test directory not found: {test_dir}")
 
+    # get_val_transforms() includes the full Phase 2 preprocessing pipeline
+    # (PreprocessingTransform: crop->CLAHE->denoise->sharpen) before
+    # centre-crop and ImageNet normalisation.  No augmentation at test time.
     test_dataset = datasets.ImageFolder(str(test_dir), transform=get_val_transforms())
     test_loader  = DataLoader(
         test_dataset,
