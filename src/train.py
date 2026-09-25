@@ -89,6 +89,11 @@ from preprocessing import (  # noqa: E402
 try:
     import cv2
     _CV2_AVAILABLE = True
+    # Crucial for PyTorch DataLoader compatibility:
+    # Disable OpenCV's internal thread pool to prevent thread contention / deadlocks
+    # with PyTorch's DataLoader multiprocessing/multithreading on CPU and Windows.
+    cv2.setNumThreads(0)
+    cv2.ocl.setUseOpenCL(False)
 except ImportError:
     _CV2_AVAILABLE = False
     print('[WARNING] cv2 not found -- preprocessing skipped. pip install opencv-python')
@@ -125,6 +130,16 @@ class PreprocessingTransform:
         if not _CV2_AVAILABLE:
             return pil_img
         img_bgr = cv2.cvtColor(np.array(pil_img, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+        
+        # High-resolution fundus images (2000-3500px) make HoughCircles and CLAHE
+        # run in 200-400ms per image, creating a severe CPU bottleneck in DataLoader.
+        # Downscale to 512px first: preserves full retinal pathology resolution
+        # while speeding up OpenCV operations by ~10x before final 224px CNN crop.
+        h, w = img_bgr.shape[:2]
+        if max(h, w) > 512:
+            scale = 512.0 / max(h, w)
+            img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
         img_bgr = circular_crop(img_bgr)       # Step 1: remove black border
         img_bgr = apply_clahe(img_bgr)         # Step 2: CLAHE contrast (L-channel)
         img_bgr = apply_noise_removal(img_bgr) # Step 3: Gaussian denoise
@@ -298,9 +313,14 @@ def train_one_epoch(
     optimiser: optim.Optimizer,
     device: torch.device,
     scaler: Optional[Any],
+    epoch_num: int = 1,
+    total_epochs: int = 1,
+    stage_name: str = "Stage",
+    log_freq: int = 10,
 ) -> Tuple[float, float]:
     """
-    Runs one complete training epoch with optional AMP (mixed precision).
+    Runs one complete training epoch with optional AMP (mixed precision)
+    and granular batch-level progress logging.
 
     Returns:
         (avg_loss, accuracy_pct)
@@ -309,8 +329,11 @@ def train_one_epoch(
     running_loss = 0.0
     correct = 0
     total   = 0
+    num_batches = len(loader)
+    epoch_start = time.time()
 
-    for images, labels in loader:
+    for batch_idx, (images, labels) in enumerate(loader, start=1):
+        batch_t0 = time.time()
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
@@ -333,10 +356,26 @@ def train_one_epoch(
             optimiser.step()
 
         batch_size = labels.size(0)
-        running_loss += loss.item() * batch_size
+        batch_loss = loss.item()
+        running_loss += batch_loss * batch_size
         preds = logits.argmax(dim=1)
-        correct += (preds == labels).sum().item()
+        batch_correct = (preds == labels).sum().item()
+        correct += batch_correct
         total   += batch_size
+        batch_time = time.time() - batch_t0
+
+        if batch_idx % log_freq == 0 or batch_idx == num_batches:
+            cur_loss = running_loss / max(total, 1)
+            cur_acc = 100.0 * correct / max(total, 1)
+            elapsed_epoch = time.time() - epoch_start
+            pct = 100.0 * batch_idx / num_batches
+            print(
+                f"  [{stage_name} Ep {epoch_num:02d}/{total_epochs:02d} | "
+                f"Batch {batch_idx:03d}/{num_batches:03d} ({pct:4.1f}%)] "
+                f"Loss={cur_loss:.4f} Acc={cur_acc:5.1f}% "
+                f"({batch_time:.2f}s/batch, {elapsed_epoch:.0f}s elapsed)",
+                flush=True
+            )
 
     avg_loss = running_loss / max(total, 1)
     accuracy = 100.0 * correct / max(total, 1)
@@ -352,9 +391,10 @@ def validate_one_epoch(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    log_freq: int = 10,
 ) -> Tuple[float, float]:
     """
-    Runs inference on the full validation set.
+    Runs inference on the full validation set with progress feedback.
 
     Returns:
         (avg_loss, accuracy_pct)
@@ -363,8 +403,9 @@ def validate_one_epoch(
     running_loss = 0.0
     correct = 0
     total   = 0
+    num_batches = len(loader)
 
-    for images, labels in loader:
+    for batch_idx, (images, labels) in enumerate(loader, start=1):
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         logits = model(images)
@@ -375,6 +416,15 @@ def validate_one_epoch(
         preds = logits.argmax(dim=1)
         correct += (preds == labels).sum().item()
         total   += batch_size
+
+        if batch_idx % log_freq == 0 or batch_idx == num_batches:
+            cur_loss = running_loss / max(total, 1)
+            cur_acc = 100.0 * correct / max(total, 1)
+            print(
+                f"    [Validation | Batch {batch_idx:03d}/{num_batches:03d}] "
+                f"Loss={cur_loss:.4f} Acc={cur_acc:5.1f}%",
+                flush=True
+            )
 
     avg_loss = running_loss / max(total, 1)
     accuracy = 100.0 * correct / max(total, 1)
@@ -529,8 +579,11 @@ def run_staged_training(
 
     for epoch in range(1, stage1_epochs + 1):
         t0 = time.time()
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimiser_s1, device, scaler)
-        val_loss,   val_acc   = validate_one_epoch(model, val_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimiser_s1, device, scaler,
+            epoch_num=epoch, total_epochs=stage1_epochs, stage_name="S1", log_freq=5
+        )
+        val_loss,   val_acc   = validate_one_epoch(model, val_loader, criterion, device, log_freq=5)
         elapsed = time.time() - t0
 
         current_lr = optimiser_s1.param_groups[0]["lr"]
@@ -591,8 +644,11 @@ def run_staged_training(
 
     for epoch in range(1, stage2_epochs + 1):
         t0 = time.time()
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimiser_s2, device, scaler)
-        val_loss,   val_acc   = validate_one_epoch(model, val_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimiser_s2, device, scaler,
+            epoch_num=epoch, total_epochs=stage2_epochs, stage_name="S2", log_freq=5
+        )
+        val_loss,   val_acc   = validate_one_epoch(model, val_loader, criterion, device, log_freq=5)
         elapsed = time.time() - t0
 
         global_epoch = len(history["train_loss"]) + 1
@@ -790,8 +846,8 @@ def parse_args() -> argparse.Namespace:
         help="Mini-batch size (default: 32).",
     )
     parser.add_argument(
-        "--num-workers", type=int, default=2,
-        help="DataLoader worker processes (default: 2; use 0 on Windows if errors occur).",
+        "--num-workers", type=int, default=(0 if sys.platform.startswith("win") else 2),
+        help="DataLoader worker processes (default: 0 on Windows to avoid process deadlock, 2 on Linux/Colab).",
     )
     parser.add_argument(
         "--stage1-lr", type=float, default=1e-3,
