@@ -66,7 +66,11 @@ for _p in (_FILE_DIR, _REPO_ROOT):
 
 from model import build_model, CLASS_NAMES, NUM_CLASSES  # noqa: E402
 from gradcam import GradCAM, generate_gradcam_heatmap     # noqa: E402
-from train import get_val_transforms                       # noqa: E402
+from train import (                                  # noqa: E402
+    get_val_transforms,
+    ClinicalImageFolder,
+    verify_class_mapping,
+)
 
 
 # ===========================================================================
@@ -450,7 +454,14 @@ def run_evaluation(
     # get_val_transforms() includes the full Phase 2 preprocessing pipeline
     # (PreprocessingTransform: crop->CLAHE->denoise->sharpen) before
     # centre-crop and ImageNet normalisation.  No augmentation at test time.
-    test_dataset = datasets.ImageFolder(str(test_dir), transform=get_val_transforms())
+    # ClinicalImageFolder strictly enforces clinical severity ordering:
+    # 0: No_DR, 1: Mild, 2: Moderate, 3: Severe, 4: Proliferative_DR
+    # instead of torchvision's default alphabetical sort order.
+    test_dataset = ClinicalImageFolder(str(test_dir), transform=get_val_transforms())
+
+    # Visual confirmation of exact class-to-index mapping
+    verify_class_mapping(test_dataset, "Test Set")
+
     test_loader  = DataLoader(
         test_dataset,
         batch_size=batch_size,
@@ -459,6 +470,8 @@ def run_evaluation(
         pin_memory=(device.type == "cuda"),
     )
     print(f"[Data] Test: {len(test_dataset):,} images across {len(test_dataset.classes)} classes")
+    print(f"[Data] Classes (test): {test_dataset.classes}")
+    print(f"[Data] Class to index: {test_dataset.class_to_idx}")
 
     # -----------------------------------------------------------------------
     # Load model checkpoint

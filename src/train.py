@@ -56,7 +56,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -191,6 +191,82 @@ def get_val_transforms(image_size: int = IMAGE_SIZE) -> transforms.Compose:
 
 
 # ===========================================================================
+# 2b. ClinicalImageFolder -- enforces clinical severity class ordering
+# ===========================================================================
+class ClinicalImageFolder(datasets.ImageFolder):
+    """
+    Subclass of torchvision.datasets.ImageFolder that strictly enforces the clinical
+    severity ordering from model.CLASS_NAMES:
+        0: No_DR
+        1: Mild
+        2: Moderate
+        3: Severe
+        4: Proliferative_DR
+
+    Why this is required:
+      Default torchvision ImageFolder scans directory subfolders and sorts them
+      alphabetically, producing:
+        {'Mild': 0, 'Moderate': 1, 'No_DR': 2, 'Proliferative_DR': 3, 'Severe': 4}
+      This causes a fatal mismatch with model.py (which defines classes in clinical order).
+      Overriding find_classes guarantees that class indices always match the
+      clinical scale in both training and evaluation across all platforms.
+    """
+
+    def find_classes(self, directory: Union[str, Path]) -> Tuple[List[str], Dict[str, int]]:
+        classes = list(CLASS_NAMES)
+        d = Path(directory)
+        for cls_name in classes:
+            if not (d / cls_name).is_dir():
+                raise FileNotFoundError(
+                    f"Expected clinical class directory '{cls_name}' not found in '{directory}'. "
+                    f"Required clinical classes: {classes}"
+                )
+        class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+        return classes, class_to_idx
+
+
+def verify_class_mapping(dataset: datasets.ImageFolder, split_name: str = "Dataset") -> Dict[str, int]:
+    """
+    Validates and visually prints the class-to-index mapping for a dataset to
+    confirm it strictly matches clinical severity ordering:
+        0: No_DR, 1: Mild, 2: Moderate, 3: Severe, 4: Proliferative_DR
+    Raises an AssertionError if any class index deviates from CLASS_NAMES.
+    """
+    expected = {name: i for i, name in enumerate(CLASS_NAMES)}
+    actual = dataset.class_to_idx
+
+    print("\n" + "=" * 68)
+    print(f" [{split_name.upper()}] CLINICAL CLASS-TO-INDEX VERIFICATION")
+    print("=" * 68)
+    print(f"  {'Index':<6} {'Class Name':<18} {'Grade':<8} {'Status':<12}")
+    print("  " + "-" * 50)
+    for name, expected_idx in expected.items():
+        actual_idx = actual.get(name, -1)
+        status = "MATCH (OK)" if actual_idx == expected_idx else "MISMATCH (ERROR)"
+        print(f"  {expected_idx:<6d} {name:<18s} Grade {expected_idx:<2d} {status:<12s}")
+    print("=" * 68)
+
+    if actual != expected:
+        raise ValueError(
+            f"Fatal class-to-index mismatch in {split_name}!\n"
+            f"  Expected (Clinical Order): {expected}\n"
+            f"  Actual   (Loaded Order)  : {actual}\n"
+            "This will cause incorrect loss weighting, mislabeled evaluation, and invalid QWK."
+        )
+
+    # Per-class counts
+    targets = getattr(dataset, "targets", None)
+    if targets is not None:
+        counts = np.bincount(targets, minlength=NUM_CLASSES)
+        print(f"  Sample counts by clinical class in {split_name}:")
+        for i, name in enumerate(CLASS_NAMES):
+            print(f"    Class {i} ({name:18s}): {int(counts[i]):>5d} samples ({100.0 * counts[i] / len(targets):>5.1f}%)")
+        print("=" * 68 + "\n")
+
+    return actual
+
+
+# ===========================================================================
 # 3. DataLoader Builders
 # ===========================================================================
 def build_dataloaders(
@@ -232,13 +308,19 @@ def build_dataloaders(
     if not val_dir.exists():
         raise FileNotFoundError(f"Validation directory not found: {val_dir}")
 
-    train_dataset = datasets.ImageFolder(str(train_dir), transform=get_train_transforms())
-    val_dataset   = datasets.ImageFolder(str(val_dir),   transform=get_val_transforms())
+    # Use ClinicalImageFolder to enforce clinical severity ordering
+    train_dataset = ClinicalImageFolder(str(train_dir), transform=get_train_transforms())
+    val_dataset   = ClinicalImageFolder(str(val_dir),   transform=get_val_transforms())
+
+    # Visual confirmation of exact class-to-index mapping
+    verify_class_mapping(train_dataset, "Training Set")
+    verify_class_mapping(val_dataset, "Validation Set")
 
     class_names: List[str] = train_dataset.classes
     print(f"[Data] Train: {len(train_dataset):,} images across {len(class_names)} classes")
     print(f"[Data] Val  : {len(val_dataset):,}  images")
     print(f"[Data] Classes (train): {class_names}")
+    print(f"[Data] Class to index: {train_dataset.class_to_idx}")
 
     # -------------------------------------------------------------------
     # Class-weighted sampler: draws rarer classes more frequently so each
@@ -299,7 +381,15 @@ def compute_class_weights(
     total   = counts.sum()
     weights = total / (num_classes * (counts + 1e-6))
     weights_t = torch.tensor(weights, dtype=torch.float32, device=device)
-    print(f"[Loss] Class weights: { {CLASS_NAMES[i]: f'{w:.3f}' for i, w in enumerate(weights_t.cpu().tolist())} }")
+
+    print("\n" + "=" * 68)
+    print(" [Loss] CLASS WEIGHTS FOR CROSS-ENTROPY (Clinical Mapping):")
+    print(f"  {'Index':<6} {'Class Name':<18} {'Samples':>8} {'Weight':>10}")
+    print("  " + "-" * 46)
+    for i, name in enumerate(CLASS_NAMES):
+        print(f"  {i:<6d} {name:<18s} {int(counts[i]):>8d} {weights[i]:>10.4f}")
+    print("=" * 68 + "\n")
+
     return weights_t
 
 
