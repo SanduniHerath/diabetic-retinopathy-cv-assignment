@@ -294,6 +294,7 @@ def predict_image(
     force_mock: bool = True,
     patient_id: str = "PT-8291",
     eye: str = "OD (Right Eye)",
+    target_class: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Core prediction dispatcher.
@@ -303,6 +304,7 @@ def predict_image(
         force_mock: If True, uses the realistic mock engine (default during development).
         patient_id: Clinical patient identifier.
         eye: Examined eye notation (OD/OS).
+        target_class: Optional pre-set class to simulate (e.g. for clinical sample buttons).
 
     Returns:
         Structured clinical screening results dictionary.
@@ -347,8 +349,11 @@ def predict_image(
 
     if real_model is None:
         # Mock prediction path (as requested by user requirements)
-        # Select random class from CLASS_NAMES
-        pred_idx = random.randint(0, len(CLASS_NAMES) - 1)
+        # Select specified target_class or random class from CLASS_NAMES
+        if target_class and target_class in CLASS_NAMES:
+            pred_idx = CLASS_NAMES.index(target_class)
+        else:
+            pred_idx = random.randint(0, len(CLASS_NAMES) - 1)
         predicted_class = CLASS_NAMES[pred_idx]
 
         # Generate confidence between 60.0% and 95.0%
@@ -414,7 +419,7 @@ def generate_clinical_assistant_reply(user_query: str, current_result: Optional[
     Severity-aware clinical assistant logic that answers medical and screening questions
     based on the currently evaluated patient and retinal findings.
     """
-    q = user_query.strip().lower()
+    q = (user_query or "").strip().lower()
 
     if not current_result:
         return (

@@ -241,8 +241,20 @@ def generate_clinical_pdf_report(result: Dict[str, Any]) -> bytes:
     # -----------------------------------------------------------------------
     elements.append(Paragraph("<b>Retinal Inspection & Grad-CAM Spatial Explainability</b>", section_title_style))
 
-    orig_buf = io.BytesIO(result["original_image_bytes"])
-    grad_buf = io.BytesIO(result["gradcam_image_bytes"])
+    def _optimize_img_for_pdf(raw_bytes: bytes, max_dim: int = 500) -> io.BytesIO:
+        from PIL import Image as PILImage
+        img = PILImage.open(io.BytesIO(raw_bytes)).convert("RGB")
+        w, h = img.size
+        if max(w, h) > max_dim:
+            scale = max_dim / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), PILImage.Resampling.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=85)
+        out.seek(0)
+        return out
+
+    orig_buf = _optimize_img_for_pdf(result["original_image_bytes"])
+    grad_buf = _optimize_img_for_pdf(result["gradcam_image_bytes"])
 
     img_width = 3.25 * inch
     img_height = 2.45 * inch

@@ -35,14 +35,24 @@ for _p in (_APP_DIR, _REPO_ROOT, _REPO_ROOT / "src"):
 from nicegui import app, events, ui
 from PIL import Image
 
-from pdf_report import generate_clinical_pdf_report
-from predictor import (
-    CLASS_NAMES,
-    CLINICAL_DETAILS,
-    generate_clinical_assistant_reply,
-    is_real_model_available,
-    predict_image,
-)
+try:
+    from app.pdf_report import generate_clinical_pdf_report
+    from app.predictor import (
+        CLASS_NAMES,
+        CLINICAL_DETAILS,
+        generate_clinical_assistant_reply,
+        is_real_model_available,
+        predict_image,
+    )
+except ImportError:
+    from pdf_report import generate_clinical_pdf_report
+    from predictor import (
+        CLASS_NAMES,
+        CLINICAL_DETAILS,
+        generate_clinical_assistant_reply,
+        is_real_model_available,
+        predict_image,
+    )
 
 # ---------------------------------------------------------------------------
 # State Management
@@ -76,21 +86,45 @@ if test_base.exists():
 # ---------------------------------------------------------------------------
 # Helper functions for UI rendering
 # ---------------------------------------------------------------------------
-def to_base64_src(img_bytes: bytes) -> str:
-    """Converts raw image bytes into a data URL for browser display."""
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-    return f"data:image/png;base64,{b64}"
+def to_base64_src(img_bytes: bytes, max_dim: int = 500) -> str:
+    """Converts image bytes to base64 data URL, downscaling large images to prevent WebSocket lag."""
+    try:
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        w, h = img.size
+        if max(w, h) > max_dim:
+            scale = max_dim / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.BILINEAR)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        return f"data:image/png;base64,{b64}"
 
 
-def run_screening_analysis(image_bytes: bytes, filename: str = "fundus_scan.png"):
+def safe_notify(message: str, **kwargs):
+    """Safely issues a UI notification, falling back gracefully if outside UI client context."""
+    try:
+        ui.notify(message, **kwargs)
+    except Exception:
+        print(f"[Notice] {message}")
+
+
+def run_screening_analysis(
+    image_bytes: bytes,
+    filename: str = "fundus_scan.png",
+    target_class: Optional[str] = None,
+):
     """Executes screening and updates all UI sections."""
     try:
-        ui.notify("Analyzing retinal microvasculature...", type="info", position="top", close_button=True)
+        safe_notify("Analyzing retinal microvasculature...", type="info", position="top", close_button=True)
         res = predict_image(
             image_bytes=image_bytes,
             force_mock=state["use_mock"],
             patient_id=state["patient_id"],
             eye=state["eye"],
+            target_class=target_class,
         )
         state["current_result"] = res
 
@@ -109,16 +143,40 @@ def run_screening_analysis(image_bytes: bytes, filename: str = "fundus_scan.png"
 
         refresh_results_view()
         refresh_chat_view()
-        ui.notify(f"Screening complete: {res['predicted_class']} ({res['confidence_pct']})", type="positive", position="top")
+        safe_notify(f"Screening complete: {res['predicted_class']} ({res['confidence_pct']})", type="positive", position="top")
     except Exception as e:
-        ui.notify(f"Error analyzing image: {e}", type="negative", position="top")
+        safe_notify(f"Error analyzing image: {e}", type="negative", position="top")
         print(f"[App Error] {e}")
 
 
-def handle_file_upload(e: events.UploadEventArguments):
+async def handle_file_upload(e: events.UploadEventArguments):
     """Handles drag-and-drop or file selector uploads."""
-    image_bytes = e.content.read()
-    run_screening_analysis(image_bytes, filename=e.name)
+    name = "uploaded_fundus.png"
+    image_bytes = b""
+    try:
+        if hasattr(e, "file"):
+            file_obj = getattr(e, "file")
+            name = getattr(file_obj, "name", "uploaded_fundus.png")
+            read_fn = getattr(file_obj, "read", None)
+            if callable(read_fn):
+                read_res = read_fn()
+                if hasattr(read_res, "__await__"):
+                    image_bytes = await read_res
+                else:
+                    image_bytes = read_res
+        elif hasattr(e, "content"):
+            name = getattr(e, "name", "uploaded_fundus.png")
+            content = getattr(e, "content")
+            image_bytes = content.read() if hasattr(content, "read") else b""
+    except Exception as upload_err:
+        safe_notify(f"Upload error: {upload_err}", type="negative")
+        print(f"[Upload Error] {upload_err}")
+        return
+
+    if image_bytes:
+        run_screening_analysis(image_bytes, filename=name)
+    else:
+        safe_notify("Received empty file upload.", type="warning")
 
 
 def load_sample(class_name: str):
@@ -127,28 +185,31 @@ def load_sample(class_name: str):
         with open(SAMPLE_IMAGES[class_name], "rb") as f:
             image_bytes = f.read()
         state["patient_id"] = f"PT-{class_name[:3].upper()}-9104"
-        run_screening_analysis(image_bytes, filename=f"sample_{class_name}.png")
+        run_screening_analysis(image_bytes, filename=f"sample_{class_name}.png", target_class=class_name)
     else:
         # Fallback: create synthetic fundus scan
         img = Image.new("RGB", (224, 224), color=(30, 20, 10))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        run_screening_analysis(buf.getvalue(), filename=f"sample_{class_name}.png")
+        run_screening_analysis(buf.getvalue(), filename=f"sample_{class_name}.png", target_class=class_name)
 
 
 def download_pdf():
     """Generates and triggers download of the clinical PDF screening report."""
     if not state["current_result"]:
-        ui.notify("Please run screening on a retinal image before generating a report.", type="warning")
+        safe_notify("Please run screening on a retinal image before generating a report.", type="warning")
         return
     try:
         pdf_bytes = generate_clinical_pdf_report(state["current_result"])
         patient_tag = state["current_result"].get("patient_id", "Patient").replace(" ", "_")
         filename = f"RetinaScan_Report_{patient_tag}_{state['current_result']['predicted_class']}.pdf"
-        ui.download(pdf_bytes, filename=filename)
-        ui.notify(f"Downloaded {filename}", type="positive", position="top")
+        try:
+            ui.download(pdf_bytes, filename=filename)
+        except Exception:
+            pass
+        safe_notify(f"Downloaded {filename}", type="positive", position="top")
     except Exception as e:
-        ui.notify(f"Failed to generate PDF: {e}", type="negative")
+        safe_notify(f"Failed to generate PDF: {e}", type="negative")
         print(f"[PDF Error] {e}")
 
 
@@ -196,15 +257,15 @@ with ui.header().classes("bg-slate-900 text-white px-6 py-3 flex items-center ju
             state["use_mock"] = not state["use_mock"]
             if state["use_mock"]:
                 mode_label.set_text("Engine: Clinical Simulation (Mock Mode)")
-                ui.notify("Switched to Mock Engine (Confidence 60-95%)", type="info")
+                safe_notify("Switched to Mock Engine (Confidence 60-95%)", type="info")
             else:
                 if is_real_model_available():
                     mode_label.set_text("Engine: PyTorch CNN (best_model.pth)")
-                    ui.notify("Switched to Real PyTorch Model Checkpoint", type="positive")
+                    safe_notify("Switched to Real PyTorch Model Checkpoint", type="positive")
                 else:
                     mode_label.set_text("Engine: Mock (No checkpoint found)")
                     state["use_mock"] = True
-                    ui.notify("best_model.pth not found in reports/training/. Remaining in Mock mode.", type="warning")
+                    safe_notify("best_model.pth not found in reports/training/. Remaining in Mock mode.", type="warning")
 
         ui.button("Switch Engine", on_click=toggle_engine_mode).props("flat dense color=sky-300 size=sm").classes("text-xs capitalize")
 
@@ -237,14 +298,14 @@ with ui.column().classes("w-full max-w-7xl mx-auto p-4 md:p-6 gap-6"):
 
                 with ui.grid().classes("grid-cols-2 gap-3 w-full"):
                     patient_input = ui.input("Patient ID / MRN", value=state["patient_id"]).classes("w-full text-xs")
-                    patient_input.on("blur", lambda: state.update({"patient_id": patient_input.value}))
+                    patient_input.on("blur", lambda: state.update({"patient_id": str(patient_input.value or "PT-2026-0842")}))
 
                     eye_select = ui.select(
                         ["OD (Right Eye)", "OS (Left Eye)"],
                         value=state["eye"],
                         label="Examined Eye",
                     ).classes("w-full text-xs")
-                    eye_select.on("update:model-value", lambda: state.update({"eye": eye_select.value}))
+                    eye_select.on("update:model-value", lambda: state.update({"eye": str(eye_select.value or "OD (Right Eye)")}))
 
             # 2. Retinal Image Upload Card
             with ui.card().classes("glass-card rounded-xl p-5 w-full gap-4"):
@@ -304,7 +365,10 @@ with ui.column().classes("w-full max-w-7xl mx-auto p-4 md:p-6 gap-6"):
 # ---------------------------------------------------------------------------
 def refresh_results_view():
     """Renders the comprehensive clinical results and inspection panel."""
-    results_container.clear()
+    try:
+        results_container.clear()
+    except Exception:
+        return
     res = state.get("current_result")
 
     with results_container:
@@ -449,7 +513,10 @@ with ui.column().classes("w-full max-w-7xl mx-auto px-4 md:px-6 pb-12 gap-4"):
         chat_container = ui.column().classes("w-full gap-3 max-h-72 overflow-y-auto p-3 bg-slate-50 rounded-lg border border-slate-200")
 
         def refresh_chat_view():
-            chat_container.clear()
+            try:
+                chat_container.clear()
+            except Exception:
+                return
             with chat_container:
                 for role, message in state["chat_history"]:
                     if role == "assistant":
@@ -471,12 +538,19 @@ with ui.column().classes("w-full max-w-7xl mx-auto px-4 md:px-6 pb-12 gap-4"):
             chat_input = ui.input(placeholder="Ask a clinical question (e.g., 'What are microaneurysms?', 'What is the referral urgency?', 'Explain the Grad-CAM heatmap')...").classes("flex-grow text-xs")
 
             def send_chat_message():
-                text = chat_input.value.strip()
+                raw_text = chat_input.value or ""
+                text = raw_text.strip()
                 if not text:
                     return
                 chat_input.value = ""
                 state["chat_history"].append(("user", text))
                 reply = generate_clinical_assistant_reply(text, state.get("current_result"))
+                state["chat_history"].append(("assistant", reply))
+                refresh_chat_view()
+
+            def send_quick_query(q_text: str):
+                state["chat_history"].append(("user", q_text))
+                reply = generate_clinical_assistant_reply(q_text, state.get("current_result"))
                 state["chat_history"].append(("assistant", reply))
                 refresh_chat_view()
 
@@ -496,11 +570,7 @@ with ui.column().classes("w-full max-w-7xl mx-auto px-4 md:px-6 pb-12 gap-4"):
             for query in quick_queries:
                 ui.button(
                     query,
-                    on_click=lambda q=query: [
-                        state["chat_history"].append(("user", q)),
-                        state["chat_history"].append(("assistant", generate_clinical_assistant_reply(q, state.get("current_result")))),
-                        refresh_chat_view(),
-                    ],
+                    on_click=lambda q=query: send_quick_query(q),
                 ).props("flat dense size=xs color=slate-700").classes("text-[10px] bg-white border border-slate-200 px-2 py-1 rounded hover:bg-slate-100")
 
     # Bottom Mandatory Clinical Disclaimer
