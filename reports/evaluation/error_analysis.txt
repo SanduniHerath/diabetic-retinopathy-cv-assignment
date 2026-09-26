@@ -1,0 +1,69 @@
+======================================================================
+ ERROR ANALYSIS – MISCLASSIFICATION PATTERNS
+ Diabetic Retinopathy Stage Detection
+======================================================================
+
+[1] OVERALL PERFORMANCE SUMMARY:
+  Overall Accuracy   : 74.32%
+  Weighted F1-Score  : 0.7446
+  Macro F1-Score     : 0.5812
+  Quadratic Weighted Kappa (QWK): 0.9990
+
+[2] PER-CLASS METRICS:
+  Class                 Precision   Recall       F1   Support
+  ---------------------------------------------------------
+  No_DR                    0.5254   0.5636   0.5439        55
+  Mild                     0.7255   0.4933   0.5873       150
+  Moderate                 0.9336   0.9889   0.9604       270
+  Severe                   0.4889   0.4889   0.4889        45
+  Proliferative_DR         0.2456   0.4828   0.3256        29
+
+[3] TOP MISCLASSIFICATION PAIRS (True -> Predicted):
+  Mild                   -> Proliferative_DR           33 samples ( 22.0%)
+  Mild                   -> No_DR                      21 samples ( 14.0%)
+  Mild                   -> Severe                     13 samples (  8.7%)
+  No_DR                  -> Mild                       12 samples ( 21.8%)
+  Severe                 -> Mild                       11 samples ( 24.4%)
+  Proliferative_DR       -> Severe                      9 samples ( 31.0%)
+  No_DR                  -> Moderate                    9 samples ( 16.4%)
+  Mild                   -> Moderate                    9 samples (  6.0%)
+  Severe                 -> Proliferative_DR            8 samples ( 17.8%)
+  Proliferative_DR       -> Mild                        5 samples ( 17.2%)
+
+[4] CLINICAL RISK DISCUSSION:
+
+  The confusion matrix reveals the model's safety profile for clinical deployment:
+
+  HIGH-RISK misclassifications (severe under-referral risk):
+    - Severe (Grade 3) predicted as Moderate (Grade 2):
+        Severe DR requires urgent ophthalmology referral. Downgrading to
+        Moderate delays treatment and risks progression to blindness. Any
+        non-trivial confusion rate here is clinically significant.
+    - Proliferative_DR (Grade 4) predicted as Severe (Grade 3):
+        Proliferative DR demands immediate intervention (laser/anti-VEGF).
+        Grade 4 missed as Grade 3 defers life-saving treatment.
+
+  LOWER-RISK misclassifications (adjacent grade confusion):
+    - No_DR (Grade 0) predicted as Mild (Grade 1):
+        Mild over-diagnosis increases referral burden but carries low harm;
+        patients undergo unnecessary monitoring, not withheld treatment.
+    - Mild (Grade 1) predicted as Moderate (Grade 2):
+        Leads to slightly earlier referral; generally safe in terms of
+        patient outcomes since both grades require follow-up.
+
+  ORDINAL STRUCTURE & QWK:
+    The Quadratic Weighted Kappa penalises distant-grade errors more than
+    adjacent-grade errors. A QWK >= 0.80 is considered clinically acceptable
+    for automated DR screening tools (APTOS 2019 benchmark). The model's QWK
+    above provides context on whether predictions remain clinically ordered
+    even when not perfectly correct.
+
+  MODEL LIMITATION NOTE:
+    This model was trained on a public Kaggle dataset (APTOS-style fundus
+    images). Real-world deployment would require prospective validation on
+    local population data and regulatory approval before clinical use.
+    The Grad-CAM visualisations (see reports/evaluation/gradcam_samples/)
+    support interpretability by highlighting retinal regions driving each
+    prediction, enabling ophthalmologist review of model attention.
+    
+======================================================================
