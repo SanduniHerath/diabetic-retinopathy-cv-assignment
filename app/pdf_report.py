@@ -372,3 +372,262 @@ def random_suffix() -> str:
     """Generates a pseudo-random clinical exam serial string."""
     import random
     return f"{random.randint(1000, 9999)}"
+
+
+def generate_patient_summary_pdf(result: Dict[str, Any]) -> bytes:
+    """
+    Generates a 1-page patient take-home summary PDF.
+
+    Modeled after LumineticsCore (IDx-DR) patient result slips and NHS DESP patient letters.
+    Uses plain language, large readable typography, and a color-coded status badge.
+    Contains NO medical jargon, NO Grad-CAM heatmaps, and NO probability tables.
+
+    Args:
+        result: Dictionary returned by predictor.predict_image()
+                Must also contain 'patient_details' key from PATIENT_DETAILS.
+
+    Returns:
+        Binary bytes of the compiled 1-page PDF.
+    """
+    try:
+        from app.predictor import PATIENT_DETAILS
+    except ImportError:
+        from predictor import PATIENT_DETAILS
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=0.75 * inch,
+        leftMargin=0.75 * inch,
+        topMargin=0.6 * inch,
+        bottomMargin=0.6 * inch,
+    )
+
+    predicted_class = result.get("predicted_class", "Unknown")
+    pd = PATIENT_DETAILS.get(predicted_class, {})
+    urgency = pd.get("appointment_urgency", "none")
+    now = datetime.now().strftime("%d %B %Y  %H:%M")
+
+    # Color palette based on urgency
+    if urgency == "none":
+        status_color = colors.HexColor("#059669")   # emerald
+        status_bg = colors.HexColor("#ECFDF5")
+        status_border = colors.HexColor("#6EE7B7")
+        urgency_label = "No Referral Needed"
+    elif urgency in ("routine",):
+        status_color = colors.HexColor("#D97706")   # amber
+        status_bg = colors.HexColor("#FFFBEB")
+        status_border = colors.HexColor("#FCD34D")
+        urgency_label = "Routine Follow-up Recommended"
+    elif urgency == "urgent":
+        status_color = colors.HexColor("#DC2626")   # red
+        status_bg = colors.HexColor("#FEF2F2")
+        status_border = colors.HexColor("#FCA5A5")
+        urgency_label = "Urgent Specialist Referral Required"
+    else:  # emergency
+        status_color = colors.HexColor("#7F1D1D")   # dark red
+        status_bg = colors.HexColor("#FEF2F2")
+        status_border = colors.HexColor("#EF4444")
+        urgency_label = "EMERGENCY — Seek Eye Care Immediately"
+
+    # Style definitions
+    styles = getSampleStyleSheet()
+
+    header_style = ParagraphStyle(
+        "header", fontName="Helvetica-Bold", fontSize=18,
+        textColor=colors.HexColor("#0F172A"), spaceAfter=4, leading=22,
+    )
+    sub_style = ParagraphStyle(
+        "sub", fontName="Helvetica", fontSize=10,
+        textColor=colors.HexColor("#64748B"), spaceAfter=2, leading=14,
+    )
+    section_title_style = ParagraphStyle(
+        "sec_title", fontName="Helvetica-Bold", fontSize=11,
+        textColor=colors.HexColor("#1E3A5F"), spaceBefore=14, spaceAfter=4, leading=14,
+    )
+    body_style = ParagraphStyle(
+        "body", fontName="Helvetica", fontSize=10,
+        textColor=colors.HexColor("#374151"), spaceAfter=4, leading=15,
+    )
+    tip_style = ParagraphStyle(
+        "tip", fontName="Helvetica", fontSize=9.5,
+        textColor=colors.HexColor("#374151"), spaceAfter=3, leading=14, leftIndent=10,
+    )
+    bold_style = ParagraphStyle(
+        "bold_body", fontName="Helvetica-Bold", fontSize=10,
+        textColor=colors.HexColor("#111827"), spaceAfter=4, leading=15,
+    )
+    warning_style = ParagraphStyle(
+        "warn", fontName="Helvetica-Bold", fontSize=10,
+        textColor=colors.HexColor("#7F1D1D"), spaceAfter=4, leading=15, backColor=colors.HexColor("#FEF2F2"),
+    )
+    small_style = ParagraphStyle(
+        "small", fontName="Helvetica", fontSize=8,
+        textColor=colors.HexColor("#94A3B8"), spaceAfter=2, leading=11,
+    )
+
+    elements = []
+
+    # -----------------------------------------------------------------------
+    # Header bar: RetinaScan logo + date
+    # -----------------------------------------------------------------------
+    header_data = [[
+        Paragraph("<b>RetinaScan AI</b>", ParagraphStyle(
+            "hdr", fontName="Helvetica-Bold", fontSize=16,
+            textColor=colors.HexColor("#1E3A5F"), leading=20,
+        )),
+        Paragraph(
+            f"<b>Patient Eye Screening Summary</b><br/>"
+            f"<font size='9' color='#64748B'>Examination Date: {now}</font>",
+            ParagraphStyle("hdr2", fontName="Helvetica", fontSize=10,
+                           textColor=colors.HexColor("#374151"), leading=14, alignment=2),
+        ),
+    ]]
+    header_table = Table(header_data, colWidths=[3.5 * inch, 3.5 * inch])
+    header_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.5, colors.HexColor("#E2E8F0")),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 12))
+
+    # Patient details row
+    pid = result.get("patient_id", "Not provided")
+    eye = result.get("eye", "Not specified")
+    pd_data = [[
+        Paragraph(f"<b>Patient ID / MRN:</b> {pid}", body_style),
+        Paragraph(f"<b>Examined Eye:</b> {eye}", body_style),
+        Paragraph(f"<b>Screening ID:</b> RS-{random_suffix()}", body_style),
+    ]]
+    pd_table = Table(pd_data, colWidths=[2.35 * inch, 2.35 * inch, 2.35 * inch])
+    pd_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+        ("ROUNDEDCORNERS", [4]),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(pd_table)
+    elements.append(Spacer(1, 14))
+
+    # -----------------------------------------------------------------------
+    # Status badge (the most important visual — large, colored)
+    # -----------------------------------------------------------------------
+    headline = pd.get("headline", "Screening complete.")
+    badge_data = [[
+        Paragraph(
+            f"<b>{pd.get('status_emoji', '')}  {urgency_label.upper()}</b>",
+            ParagraphStyle("badge_label", fontName="Helvetica-Bold", fontSize=11,
+                           textColor=status_color, leading=14),
+        ),
+    ], [
+        Paragraph(
+            f"<b>{headline}</b>",
+            ParagraphStyle("badge_headline", fontName="Helvetica-Bold", fontSize=13,
+                           textColor=colors.HexColor("#0F172A"), leading=18),
+        ),
+    ]]
+    badge_table = Table(badge_data, colWidths=[7.0 * inch])
+    badge_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), status_bg),
+        ("LINEAFTER", (0, 0), (0, -1), 6, status_color),
+        ("LINEBEFORE", (0, 0), (0, -1), 6, status_color),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("BOX", (0, 0), (-1, -1), 1, status_border),
+    ]))
+    elements.append(badge_table)
+    elements.append(Spacer(1, 14))
+
+    # -----------------------------------------------------------------------
+    # What the scan found (plain-language)
+    # -----------------------------------------------------------------------
+    elements.append(Paragraph("What the scan found", section_title_style))
+    elements.append(Paragraph(pd.get("plain_summary", ""), body_style))
+    elements.append(Spacer(1, 6))
+
+    elements.append(Paragraph("Why this matters", section_title_style))
+    elements.append(Paragraph(pd.get("why_it_matters", ""), body_style))
+    elements.append(Spacer(1, 6))
+
+    # -----------------------------------------------------------------------
+    # Your next step (highlighted box)
+    # -----------------------------------------------------------------------
+    elements.append(Paragraph("Your next step", section_title_style))
+    next_step_data = [[
+        Paragraph(f"&#x279C;  {pd.get('next_step', '')}", bold_style),
+    ]]
+    next_table = Table(next_step_data, colWidths=[7.0 * inch])
+    next_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EFF6FF")),
+        ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#93C5FD")),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+    ]))
+    elements.append(next_table)
+    elements.append(Spacer(1, 10))
+
+    # -----------------------------------------------------------------------
+    # Emergency warning (shown only for urgent / emergency)
+    # -----------------------------------------------------------------------
+    emergency_warning = pd.get("emergency_warning")
+    if emergency_warning:
+        warn_data = [[
+            Paragraph(f"&#x26A0;  {emergency_warning}", warning_style),
+        ]]
+        warn_table = Table(warn_data, colWidths=[7.0 * inch])
+        warn_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FEF2F2")),
+            ("BOX", (0, 0), (-1, -1), 1.5, colors.HexColor("#EF4444")),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ]))
+        elements.append(warn_table)
+        elements.append(Spacer(1, 10))
+
+    # -----------------------------------------------------------------------
+    # Before your appointment checklist (shown only when referral needed)
+    # -----------------------------------------------------------------------
+    prep = pd.get("prep_checklist", [])
+    if prep:
+        elements.append(Paragraph("Before your eye appointment", section_title_style))
+        for item in prep:
+            elements.append(Paragraph(f"&#x2714;  {item}", tip_style))
+        elements.append(Spacer(1, 8))
+
+    # -----------------------------------------------------------------------
+    # Daily self-care tips
+    # -----------------------------------------------------------------------
+    tips = pd.get("daily_tips", [])
+    if tips:
+        elements.append(Paragraph("Protecting your sight every day", section_title_style))
+        for tip in tips:
+            elements.append(Paragraph(f"&#x2022;  {tip}", tip_style))
+        elements.append(Spacer(1, 10))
+
+    # -----------------------------------------------------------------------
+    # Footer: reassurance + disclaimer
+    # -----------------------------------------------------------------------
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#E2E8F0")))
+    elements.append(Spacer(1, 6))
+    elements.append(Paragraph(
+        "Remember: over 90% of serious sight loss from diabetic eye disease can be prevented "
+        "with timely treatment and good diabetes management.",
+        ParagraphStyle("reassure", fontName="Helvetica-BoldOblique", fontSize=9,
+                       textColor=colors.HexColor("#1E3A5F"), leading=13, spaceAfter=4),
+    ))
+    elements.append(Paragraph(
+        "This document was generated by RetinaScan AI — an investigational clinical decision support system for educational "
+        "and research use only. It is NOT an FDA, CE-mark, or MHRA cleared diagnostic medical device. "
+        "All findings must be confirmed by a licensed eye care professional before any clinical action is taken. "
+        "If you have any concerns about your vision, contact your healthcare provider immediately.",
+        small_style,
+    ))
+
+    doc.build(elements)
+    return buffer.getvalue()

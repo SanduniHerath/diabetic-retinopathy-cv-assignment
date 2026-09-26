@@ -36,19 +36,21 @@ from nicegui import app, events, ui
 from PIL import Image
 
 try:
-    from app.pdf_report import generate_clinical_pdf_report
+    from app.pdf_report import generate_clinical_pdf_report, generate_patient_summary_pdf
     from app.predictor import (
         CLASS_NAMES,
         CLINICAL_DETAILS,
+        PATIENT_DETAILS,
         generate_clinical_assistant_reply,
         is_real_model_available,
         predict_image,
     )
 except ImportError:
-    from pdf_report import generate_clinical_pdf_report
+    from pdf_report import generate_clinical_pdf_report, generate_patient_summary_pdf
     from predictor import (
         CLASS_NAMES,
         CLINICAL_DETAILS,
+        PATIENT_DETAILS,
         generate_clinical_assistant_reply,
         is_real_model_available,
         predict_image,
@@ -62,6 +64,12 @@ state: Dict[str, Any] = {
     "patient_id": "PT-2026-0842",
     "eye": "OD (Right Eye)",
     "use_mock": True,
+    "patient_mode": False,          # False = Clinician View, True = Patient View
+    "symptom_flags": {              # Patient-reported emergency symptoms
+        "floaters": None,
+        "blurry": None,
+        "dark_curtain": None,
+    },
     "chat_history": [
         (
             "assistant",
@@ -213,6 +221,26 @@ def download_pdf():
         print(f"[PDF Error] {e}")
 
 
+def download_patient_pdf():
+    """Generates and triggers download of the plain-language patient take-home summary PDF."""
+    if not state["current_result"]:
+        safe_notify("Please run a scan first before downloading your summary.", type="warning")
+        return
+    try:
+        pdf_bytes = generate_patient_summary_pdf(state["current_result"])
+        patient_tag = state["current_result"].get("patient_id", "Patient").replace(" ", "_")
+        cls = state["current_result"]["predicted_class"]
+        filename = f"RetinaScan_MyEyeSummary_{patient_tag}_{cls}.pdf"
+        try:
+            ui.download(pdf_bytes, filename=filename)
+        except Exception:
+            pass
+        safe_notify("Your personal eye summary has been downloaded.", type="positive", position="top")
+    except Exception as e:
+        safe_notify(f"Could not generate your summary: {e}", type="negative")
+        print(f"[Patient PDF Error] {e}")
+
+
 # ---------------------------------------------------------------------------
 # UI Layout Construction
 # ---------------------------------------------------------------------------
@@ -245,9 +273,30 @@ with ui.header().classes("bg-slate-900 text-white px-6 py-3 flex items-center ju
         ui.icon("visibility", size="28px").classes("text-sky-400")
         with ui.column().classes("gap-0"):
             ui.label("RetinaScan AI").classes("text-lg font-bold tracking-tight text-white")
-            ui.label("Clinical Diabetic Retinopathy Triage & Decision Support").classes("text-xs text-slate-400 font-medium")
+            view_mode_label = ui.label("Clinician View — Clinical DR Triage & Decision Support").classes("text-xs text-slate-400 font-medium")
 
-    with ui.row().classes("items-center gap-4"):
+    with ui.row().classes("items-center gap-3"):
+        # View mode toggle (Patient / Clinician)
+        with ui.row().classes("items-center gap-1.5 px-3 py-1 rounded-full bg-sky-700 border border-sky-500 text-xs font-semibold text-white cursor-pointer"):
+            ui.icon("person", size="16px").classes("text-sky-200")
+            view_toggle_label = ui.label("👨‍⚕️ Clinician View")
+
+        def toggle_view_mode():
+            state["patient_mode"] = not state["patient_mode"]
+            # Reset symptom flags on every toggle
+            state["symptom_flags"] = {"floaters": None, "blurry": None, "dark_curtain": None}
+            if state["patient_mode"]:
+                view_toggle_label.set_text("👤 Patient View")
+                view_mode_label.set_text("Patient Portal — My Eye Health Summary")
+                safe_notify("Switched to Patient View — plain-language results", type="info")
+            else:
+                view_toggle_label.set_text("👨‍⚕️ Clinician View")
+                view_mode_label.set_text("Clinician View — Clinical DR Triage & Decision Support")
+                safe_notify("Switched to Clinician View — full diagnostic workstation", type="info")
+            refresh_results_view()
+
+        ui.button("Switch View", on_click=toggle_view_mode).props("flat dense color=sky-200 size=sm").classes("text-xs capitalize")
+
         # Engine indicator badge
         with ui.row().classes("items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300"):
             ui.html('<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>')
@@ -364,7 +413,7 @@ with ui.column().classes("w-full max-w-7xl mx-auto p-4 md:p-6 gap-6"):
 # Dynamic Results View Renderer
 # ---------------------------------------------------------------------------
 def refresh_results_view():
-    """Renders the comprehensive clinical results and inspection panel."""
+    """Renders clinical or patient results panel depending on view mode."""
     try:
         results_container.clear()
     except Exception:
@@ -374,128 +423,304 @@ def refresh_results_view():
     with results_container:
         if not res:
             # Empty / Awaiting Scan State
-            with ui.card().classes("glass-card rounded-xl p-12 w-full flex flex-col items-center justify-center text-center gap-3 border-dashed border-2 border-slate-300"):
-                ui.icon("add_photo_alternate", size="48px").classes("text-slate-300")
-                ui.label("Awaiting Retinal Fundus Photograph").classes("text-base font-bold text-slate-700")
-                ui.label("Upload a patient fundus photo or click a Quick Sample on the left to activate automated classification, Grad-CAM visualization, and referral triage.").classes("text-xs text-slate-400 max-w-md")
+            icon_text = "add_photo_alternate"
+            if state.get("patient_mode"):
+                with ui.card().classes("glass-card rounded-xl p-12 w-full flex flex-col items-center justify-center text-center gap-4 border-dashed border-2 border-slate-200"):
+                    ui.icon("remove_red_eye", size="56px").classes("text-slate-300")
+                    ui.label("Your Eye Scan Result Will Appear Here").classes("text-lg font-bold text-slate-700")
+                    ui.label("Please upload your retinal photograph or select a sample on the left. Your results will be shown in plain, easy-to-understand language.").classes("text-sm text-slate-400 max-w-md leading-relaxed")
+            else:
+                with ui.card().classes("glass-card rounded-xl p-12 w-full flex flex-col items-center justify-center text-center gap-3 border-dashed border-2 border-slate-300"):
+                    ui.icon("add_photo_alternate", size="48px").classes("text-slate-300")
+                    ui.label("Awaiting Retinal Fundus Photograph").classes("text-base font-bold text-slate-700")
+                    ui.label("Upload a patient fundus photo or click a Quick Sample on the left to activate automated classification, Grad-CAM visualization, and referral triage.").classes("text-xs text-slate-400 max-w-md")
             return
 
-        details = res["details"]
-        triage_cat = res["triage_category"]
-
-        # Color token resolution
-        if triage_cat == "urgent":
-            badge_bg = "bg-red-50 border-red-200 text-red-800"
-            badge_dot = "bg-red-600"
-            stage_pill_bg = "bg-red-100 text-red-900 border-red-300"
-        elif triage_cat == "routine":
-            badge_bg = "bg-amber-50 border-amber-200 text-amber-800"
-            badge_dot = "bg-amber-500"
-            stage_pill_bg = "bg-amber-100 text-amber-900 border-amber-300"
+        # Route to the correct view
+        if state.get("patient_mode"):
+            _render_patient_view(res)
         else:
-            badge_bg = "bg-emerald-50 border-emerald-200 text-emerald-800"
-            badge_dot = "bg-emerald-500"
-            stage_pill_bg = "bg-emerald-100 text-emerald-900 border-emerald-300"
+            _render_clinician_view(res)
 
-        # -------------------------------------------------------------------
-        # 1. Primary Triage & Diagnostic Findings Card
-        # -------------------------------------------------------------------
-        with ui.card().classes("glass-card rounded-xl p-6 w-full gap-4"):
-            with ui.row().classes("items-center justify-between w-full border-b border-slate-100 pb-3"):
+
+def _render_clinician_view(res: dict):
+    """Renders the full technical clinician workstation (unchanged from original)."""
+    details = res["details"]
+    triage_cat = res["triage_category"]
+
+    # Color token resolution
+    if triage_cat == "urgent":
+        badge_bg = "bg-red-50 border-red-200 text-red-800"
+        badge_dot = "bg-red-600"
+        stage_pill_bg = "bg-red-100 text-red-900 border-red-300"
+    elif triage_cat == "routine":
+        badge_bg = "bg-amber-50 border-amber-200 text-amber-800"
+        badge_dot = "bg-amber-500"
+        stage_pill_bg = "bg-amber-100 text-amber-900 border-amber-300"
+    else:
+        badge_bg = "bg-emerald-50 border-emerald-200 text-emerald-800"
+        badge_dot = "bg-emerald-500"
+        stage_pill_bg = "bg-emerald-100 text-emerald-900 border-emerald-300"
+
+    # -------------------------------------------------------------------
+    # 1. Primary Triage & Diagnostic Findings Card
+    # -------------------------------------------------------------------
+    with ui.card().classes("glass-card rounded-xl p-6 w-full gap-4"):
+        with ui.row().classes("items-center justify-between w-full border-b border-slate-100 pb-3"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("assignment_turned_in", size="20px").classes("text-sky-600")
+                ui.label("Automated Diagnostic Finding").classes("text-sm font-bold text-slate-800")
+            ui.button("Download PDF Report", on_click=download_pdf).props("unelevated size=sm color=sky-600 icon=picture_as_pdf").classes("text-xs font-semibold px-3 py-1 shadow-sm")
+
+        with ui.row().classes("items-center justify-between w-full flex-wrap gap-4"):
+            with ui.column().classes("gap-1"):
                 with ui.row().classes("items-center gap-2"):
-                    ui.icon("assignment_turned_in", size="20px").classes("text-sky-600")
-                    ui.label("Automated Diagnostic Finding").classes("text-sm font-bold text-slate-800")
-                # Download PDF button
-                ui.button("Download PDF Report", on_click=download_pdf).props("unelevated size=sm color=sky-600 icon=picture_as_pdf").classes("text-xs font-semibold px-3 py-1 shadow-sm")
+                    ui.label(details["full_name"]).classes("text-xl font-extrabold text-slate-900 tracking-tight")
+                    ui.label(details["grade"]).classes(f"text-xs font-bold px-2 py-0.5 rounded border {stage_pill_bg}")
+                ui.label(f"Evaluated Eye: {res['eye']}  |  Patient MRN: {res['patient_id']}").classes("text-xs text-slate-500")
 
-            # Main Diagnosis Banner & Triage Pill
-            with ui.row().classes("items-center justify-between w-full flex-wrap gap-4"):
-                with ui.column().classes("gap-1"):
-                    with ui.row().classes("items-center gap-2"):
-                        ui.label(details["full_name"]).classes("text-xl font-extrabold text-slate-900 tracking-tight")
-                        ui.label(details["grade"]).classes(f"text-xs font-bold px-2 py-0.5 rounded border {stage_pill_bg}")
-                    ui.label(f"Evaluated Eye: {res['eye']}  |  Patient MRN: {res['patient_id']}").classes("text-xs text-slate-500")
+            with ui.row().classes(f"items-center gap-2 px-3 py-2 rounded-lg border shadow-sm {badge_bg}"):
+                ui.html(f'<span class="w-3 h-3 rounded-full {badge_dot}"></span>')
+                with ui.column().classes("gap-0"):
+                    ui.label("Triage Action:").classes("text-[10px] font-semibold uppercase tracking-wider opacity-75")
+                    ui.label(res["triage_label"]).classes("text-sm font-extrabold")
+                    ui.label(f"Target: {res['triage_timeline']}").classes("text-[11px] font-medium")
 
-                # Triage Status Badge (Green / Yellow / Red)
-                with ui.row().classes(f"items-center gap-2 px-3 py-2 rounded-lg border shadow-sm {badge_bg}"):
-                    ui.html(f'<span class="w-3 h-3 rounded-full {badge_dot}"></span>')
-                    with ui.column().classes("gap-0"):
-                        ui.label("Triage Action:").classes("text-[10px] font-semibold uppercase tracking-wider opacity-75")
-                        ui.label(res["triage_label"]).classes("text-sm font-extrabold")
-                        ui.label(f"Target: {res['triage_timeline']}").classes("text-[11px] font-medium")
+        with ui.column().classes("w-full bg-slate-50 border border-slate-200 rounded-lg p-4 gap-2 mt-2"):
+            with ui.row().classes("justify-between w-full items-center"):
+                ui.label("Primary Classification Confidence:").classes("text-xs font-semibold text-slate-700")
+                ui.label(res["confidence_pct"]).classes("text-sm font-extrabold text-sky-700 font-mono")
+            ui.linear_progress(value=res["confidence"], show_value=False).props("size=8px color=sky-600 rounded").classes("w-full")
+            ui.label("Multi-Class Posterior Probability Distribution (5-Stage ICDR Scale):").classes("text-[11px] text-slate-500 font-medium pt-1")
+            with ui.grid().classes("grid-cols-5 gap-2 w-full pt-1"):
+                for idx, c_name in enumerate(CLASS_NAMES):
+                    p_val = res["probabilities"][idx]
+                    is_winner = (idx == res["class_index"])
+                    p_bg = "bg-sky-100 text-sky-900 font-bold border-sky-300" if is_winner else "bg-white text-slate-600 border-slate-200"
+                    with ui.column().classes(f"p-2 rounded border text-center gap-0.5 {p_bg}"):
+                        ui.label(c_name.replace("_", " ")).classes("text-[10px] truncate")
+                        ui.label(f"{p_val*100:.1f}%").classes("text-xs font-mono")
 
-            # Confidence Indicator & Probability Distribution
-            with ui.column().classes("w-full bg-slate-50 border border-slate-200 rounded-lg p-4 gap-2 mt-2"):
-                with ui.row().classes("justify-between w-full items-center"):
-                    ui.label("Primary Classification Confidence:").classes("text-xs font-semibold text-slate-700")
-                    ui.label(res["confidence_pct"]).classes("text-sm font-extrabold text-sky-700 font-mono")
+    # -------------------------------------------------------------------
+    # 2. Retinal Inspection Panel (Side-by-Side: Original vs Grad-CAM)
+    # -------------------------------------------------------------------
+    with ui.card().classes("glass-card rounded-xl p-6 w-full gap-4"):
+        with ui.row().classes("items-center justify-between w-full border-b border-slate-100 pb-3"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("biotech", size="20px").classes("text-indigo-600")
+                ui.label("Retinal Inspection & Spatial Explainability").classes("text-sm font-bold text-slate-800")
+            ui.label("Grad-CAM Class Activation").classes("text-[10px] font-mono text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded")
 
-                ui.linear_progress(value=res["confidence"], show_value=False).props("size=8px color=sky-600 rounded").classes("w-full")
+        ui.label(
+            "Side-by-side verification: The left panel displays the uploaded fundus field. "
+            "The right panel displays the Grad-CAM saliency heatmap, revealing the exact retinal lesions (microaneurysms, "
+            "exudates, haemorrhages) that drove the model's classification decision."
+        ).classes("text-xs text-slate-500")
 
-                # Multi-class probability breakdown
-                ui.label("Multi-Class Posterior Probability Distribution (5-Stage ICDR Scale):").classes("text-[11px] text-slate-500 font-medium pt-1")
-                with ui.grid().classes("grid-cols-5 gap-2 w-full pt-1"):
-                    for idx, c_name in enumerate(CLASS_NAMES):
-                        p_val = res["probabilities"][idx]
-                        is_winner = (idx == res["class_index"])
-                        p_bg = "bg-sky-100 text-sky-900 font-bold border-sky-300" if is_winner else "bg-white text-slate-600 border-slate-200"
-                        with ui.column().classes(f"p-2 rounded border text-center gap-0.5 {p_bg}"):
-                            ui.label(c_name.replace("_", " ")).classes("text-[10px] truncate")
-                            ui.label(f"{p_val*100:.1f}%").classes("text-xs font-mono")
+        with ui.grid().classes("grid-cols-1 sm:grid-cols-2 gap-4 w-full pt-2"):
+            with ui.column().classes("gap-2 items-center bg-slate-900 rounded-lg p-2 border border-slate-300"):
+                ui.image(to_base64_src(res["original_image_bytes"])).classes("w-full h-56 object-contain rounded")
+                ui.label("Patient Fundus Photograph").classes("text-xs font-semibold text-slate-200")
+            with ui.column().classes("gap-2 items-center bg-slate-900 rounded-lg p-2 border border-indigo-300"):
+                ui.image(to_base64_src(res["gradcam_image_bytes"])).classes("w-full h-56 object-contain rounded")
+                with ui.row().classes("items-center gap-1.5"):
+                    ui.html('<span class="w-2 h-2 rounded-full bg-red-500"></span>')
+                    ui.label("Grad-CAM Attention Heatmap").classes("text-xs font-semibold text-slate-200")
 
-        # -------------------------------------------------------------------
-        # 2. Retinal Inspection Panel (Side-by-Side: Original vs Grad-CAM)
-        # -------------------------------------------------------------------
-        with ui.card().classes("glass-card rounded-xl p-6 w-full gap-4"):
-            with ui.row().classes("items-center justify-between w-full border-b border-slate-100 pb-3"):
-                with ui.row().classes("items-center gap-2"):
-                    ui.icon("biotech", size="20px").classes("text-indigo-600")
-                    ui.label("Retinal Inspection & Spatial Explainability").classes("text-sm font-bold text-slate-800")
-                ui.label("Grad-CAM Class Activation").classes("text-[10px] font-mono text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded")
+    # -------------------------------------------------------------------
+    # 3. Pathological Findings & Clinical Care Protocol
+    # -------------------------------------------------------------------
+    with ui.card().classes("glass-card rounded-xl p-6 w-full gap-4"):
+        with ui.row().classes("items-center gap-2 border-b border-slate-100 pb-3 w-full"):
+            ui.icon("fact_check", size="20px").classes("text-slate-700")
+            ui.label("Pathology Summary & Care Recommendations").classes("text-sm font-bold text-slate-800")
 
+        with ui.grid().classes("grid-cols-1 md:grid-cols-2 gap-4 w-full"):
+            with ui.column().classes("gap-2 bg-slate-50 p-4 rounded-lg border border-slate-200"):
+                ui.label("Pathological Feature Assessment:").classes("text-xs font-bold text-slate-700")
+                for finding in details["pathology_findings"]:
+                    with ui.row().classes("items-start gap-2"):
+                        ui.icon("lens", size="8px").classes("text-sky-600 mt-1.5")
+                        ui.label(finding).classes("text-xs text-slate-600 leading-snug")
+            with ui.column().classes("gap-2 bg-slate-50 p-4 rounded-lg border border-slate-200"):
+                ui.label("Recommended Management Plan:").classes("text-xs font-bold text-slate-700")
+                for act in details["recommendations"]:
+                    with ui.row().classes("items-start gap-2"):
+                        ui.icon("check", size="14px").classes("text-emerald-600 mt-0.5")
+                        ui.label(act).classes("text-xs text-slate-600 leading-snug")
+
+
+def _render_patient_view(res: dict):
+    """
+    Renders the plain-language Patient Portal view.
+    Modeled after NHS DESP patient letters and LumineticsCore patient result slips.
+    No medical jargon, no Grad-CAM, no probability tables.
+    """
+    pd_info = PATIENT_DETAILS.get(res["predicted_class"], {})
+    urgency = pd_info.get("appointment_urgency", "none")
+
+    # Color palette by urgency
+    if urgency == "none":
+        status_bg = "bg-emerald-50 border-emerald-200"
+        status_text = "text-emerald-800"
+        status_icon = "check_circle"
+        status_icon_color = "text-emerald-600"
+        action_bg = "bg-emerald-100 border-emerald-300 text-emerald-900"
+    elif urgency in ("routine",):
+        status_bg = "bg-amber-50 border-amber-200"
+        status_text = "text-amber-900"
+        status_icon = "schedule"
+        status_icon_color = "text-amber-600"
+        action_bg = "bg-amber-100 border-amber-300 text-amber-900"
+    elif urgency == "urgent":
+        status_bg = "bg-red-50 border-red-200"
+        status_text = "text-red-900"
+        status_icon = "warning"
+        status_icon_color = "text-red-600"
+        action_bg = "bg-red-100 border-red-300 text-red-900"
+    else:  # emergency
+        status_bg = "bg-red-100 border-red-400"
+        status_text = "text-red-900"
+        status_icon = "emergency"
+        status_icon_color = "text-red-700"
+        action_bg = "bg-red-200 border-red-500 text-red-900"
+
+    # -------------------------------------------------------------------
+    # 1. Big Status Card — headline + plain summary + your eye image
+    # -------------------------------------------------------------------
+    with ui.card().classes(f"rounded-xl p-6 w-full gap-4 border-2 {status_bg}"):
+        with ui.row().classes("items-center gap-3 pb-3 border-b border-slate-200"):
+            ui.icon(status_icon, size="32px").classes(status_icon_color)
+            with ui.column().classes("gap-0"):
+                ui.label("Your Eye Screening Result").classes("text-xs font-semibold text-slate-500 uppercase tracking-wide")
+                ui.label(pd_info.get("headline", "Scan complete.")).classes(f"text-lg font-extrabold leading-snug {status_text}")
+
+        # Your fundus photo (patient-friendly display — no Grad-CAM)
+        with ui.row().classes("gap-5 items-start flex-wrap"):
+            with ui.column().classes("gap-2 items-center bg-slate-900 rounded-lg p-2 border border-slate-600 min-w-[180px]"):
+                ui.image(to_base64_src(res["original_image_bytes"])).classes("w-44 h-44 object-contain rounded")
+                ui.label("Your retinal photograph").classes("text-[11px] text-slate-300 font-medium")
+
+            with ui.column().classes("flex-1 gap-3 min-w-[220px]"):
+                ui.label("What the scan found").classes("text-sm font-bold text-slate-800")
+                ui.label(pd_info.get("plain_summary", "")).classes("text-sm text-slate-600 leading-relaxed")
+                ui.label("Why this matters").classes("text-sm font-bold text-slate-800 mt-2")
+                ui.label(pd_info.get("why_it_matters", "")).classes("text-sm text-slate-600 leading-relaxed")
+
+    # -------------------------------------------------------------------
+    # 2. Emergency symptom flag (always shown — interactive)
+    # -------------------------------------------------------------------
+    with ui.card().classes("glass-card rounded-xl p-5 w-full gap-3"):
+        with ui.row().classes("items-center gap-2 border-b border-slate-100 pb-2"):
+            ui.icon("report_problem", size="20px").classes("text-red-500")
+            ui.label("Are you experiencing any of these symptoms RIGHT NOW?").classes("text-sm font-bold text-slate-800")
+
+        ui.label("These symptoms can be signs of an emergency — even if your scan result looks mild.").classes("text-xs text-slate-500")
+
+        symptom_warning_row = ui.row().classes("w-full")
+
+        def update_symptom_warning():
+            flags = state["symptom_flags"]
+            any_yes = any(v is True for v in flags.values())
+            symptom_warning_row.clear()
+            with symptom_warning_row:
+                if any_yes:
+                    with ui.row().classes("items-start gap-3 bg-red-50 border-2 border-red-400 rounded-lg p-4 w-full"):
+                        ui.icon("emergency", size="28px").classes("text-red-600 mt-0.5")
+                        with ui.column().classes("gap-1"):
+                            ui.label("⚠️  Please seek urgent eye care today").classes("text-base font-extrabold text-red-800")
+                            ui.label(
+                                "Based on what you have reported, you should contact your eye specialist or go to your nearest "
+                                "A&E eye emergency department as soon as possible. Do not drive yourself. "
+                                "Do not wait for a routine appointment."
+                            ).classes("text-sm text-red-700 leading-relaxed")
+
+        symptoms = [
+            ("floaters", "I can see new dark floaters, spots, or cobwebs in my vision"),
+            ("blurry", "My vision has become suddenly blurry or there is a dark shadow / curtain"),
+            ("dark_curtain", "I have had a sudden loss of vision in one or both eyes"),
+        ]
+
+        with ui.column().classes("w-full gap-2 pt-1"):
+            for flag_key, label_text in symptoms:
+                with ui.row().classes("items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-200"):
+                    ui.label(label_text).classes("text-sm text-slate-700 flex-1")
+                    with ui.row().classes("gap-2"):
+                        ui.button(
+                            "Yes",
+                            on_click=lambda k=flag_key: [
+                                state["symptom_flags"].update({k: True}),
+                                update_symptom_warning(),
+                            ],
+                        ).props("unelevated dense size=sm color=red").classes("text-xs font-bold px-3")
+                        ui.button(
+                            "No",
+                            on_click=lambda k=flag_key: [
+                                state["symptom_flags"].update({k: False}),
+                                update_symptom_warning(),
+                            ],
+                        ).props("outline dense size=sm color=grey").classes("text-xs px-3")
+
+        update_symptom_warning()
+
+    # -------------------------------------------------------------------
+    # 3. Your Next Step
+    # -------------------------------------------------------------------
+    with ui.card().classes("glass-card rounded-xl p-5 w-full gap-3"):
+        with ui.row().classes("items-center gap-2 border-b border-slate-100 pb-2"):
+            ui.icon("directions", size="20px").classes("text-sky-600")
+            ui.label("Your Next Step").classes("text-sm font-bold text-slate-800")
+
+        with ui.row().classes(f"items-start gap-3 p-4 rounded-lg border {action_bg}"):
+            ui.icon("arrow_forward_ios", size="18px").classes("mt-0.5")
+            ui.label(pd_info.get("next_step", "")).classes("text-sm font-semibold leading-relaxed")
+
+        # Appointment prep checklist (only if referral needed)
+        prep = pd_info.get("prep_checklist", [])
+        if prep:
+            ui.label("Before your eye appointment:").classes("text-sm font-bold text-slate-700 pt-2")
+            with ui.column().classes("gap-2"):
+                for item in prep:
+                    with ui.row().classes("items-start gap-2"):
+                        ui.icon("check_box", size="18px").classes("text-sky-600 mt-0.5")
+                        ui.label(item).classes("text-sm text-slate-600 leading-snug")
+
+        # Emergency warning box (only for urgent/emergency stages)
+        warn_text = pd_info.get("emergency_warning")
+        if warn_text:
+            with ui.row().classes("items-start gap-3 mt-2 bg-red-50 border border-red-300 rounded-lg p-3"):
+                ui.icon("warning_amber", size="22px").classes("text-red-600 mt-0.5")
+                ui.label(warn_text).classes("text-sm font-semibold text-red-800 leading-relaxed")
+
+    # -------------------------------------------------------------------
+    # 4. Daily Tips & Download
+    # -------------------------------------------------------------------
+    with ui.card().classes("glass-card rounded-xl p-5 w-full gap-3"):
+        with ui.row().classes("items-center justify-between w-full border-b border-slate-100 pb-2"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("favorite", size="20px").classes("text-rose-500")
+                ui.label("Protecting Your Sight Every Day").classes("text-sm font-bold text-slate-800")
+            ui.button(
+                "Download My Eye Summary",
+                on_click=download_patient_pdf,
+            ).props("unelevated size=sm color=sky-600 icon=download").classes("text-xs font-semibold")
+
+        daily_tips = pd_info.get("daily_tips", [])
+        with ui.grid().classes("grid-cols-1 md:grid-cols-2 gap-2 w-full pt-1"):
+            for tip in daily_tips:
+                with ui.row().classes("items-start gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100"):
+                    ui.icon("tips_and_updates", size="16px").classes("text-sky-500 mt-0.5")
+                    ui.label(tip).classes("text-xs text-slate-600 leading-snug")
+
+        # NHS-style reassurance footer
+        with ui.row().classes("items-center gap-2 mt-2 p-3 bg-sky-50 rounded-lg border border-sky-100"):
+            ui.icon("shield", size="18px").classes("text-sky-600")
             ui.label(
-                "Side-by-side verification: The left panel displays the uploaded fundus field. "
-                "The right panel displays the Grad-CAM saliency heatmap, revealing the exact retinal lesions (microaneurysms, "
-                "exudates, haemorrhages) that drove the model's classification decision."
-            ).classes("text-xs text-slate-500")
+                "Remember: over 90% of serious sight loss from diabetic eye disease can be "
+                "prevented with timely treatment and good diabetes management."
+            ).classes("text-xs font-semibold text-sky-800 leading-relaxed")
 
-            with ui.grid().classes("grid-cols-1 sm:grid-cols-2 gap-4 w-full pt-2"):
-                # Left: Original Image
-                with ui.column().classes("gap-2 items-center bg-slate-900 rounded-lg p-2 border border-slate-300"):
-                    ui.image(to_base64_src(res["original_image_bytes"])).classes("w-full h-56 object-contain rounded")
-                    ui.label("Patient Fundus Photograph").classes("text-xs font-semibold text-slate-200")
 
-                # Right: Grad-CAM Heatmap
-                with ui.column().classes("gap-2 items-center bg-slate-900 rounded-lg p-2 border border-indigo-300"):
-                    ui.image(to_base64_src(res["gradcam_image_bytes"])).classes("w-full h-56 object-contain rounded")
-                    with ui.row().classes("items-center gap-1.5"):
-                        ui.html('<span class="w-2 h-2 rounded-full bg-red-500"></span>')
-                        ui.label("Grad-CAM Attention Heatmap").classes("text-xs font-semibold text-slate-200")
-
-        # -------------------------------------------------------------------
-        # 3. Pathological Findings & Clinical Care Protocol
-        # -------------------------------------------------------------------
-        with ui.card().classes("glass-card rounded-xl p-6 w-full gap-4"):
-            with ui.row().classes("items-center gap-2 border-b border-slate-100 pb-3 w-full"):
-                ui.icon("fact_check", size="20px").classes("text-slate-700")
-                ui.label("Pathology Summary & Care Recommendations").classes("text-sm font-bold text-slate-800")
-
-            with ui.grid().classes("grid-cols-1 md:grid-cols-2 gap-4 w-full"):
-                # Left: Observed anatomical features
-                with ui.column().classes("gap-2 bg-slate-50 p-4 rounded-lg border border-slate-200"):
-                    ui.label("Pathological Feature Assessment:").classes("text-xs font-bold text-slate-700")
-                    for finding in details["pathology_findings"]:
-                        with ui.row().classes("items-start gap-2"):
-                            ui.icon("lens", size="8px").classes("text-sky-600 mt-1.5")
-                            ui.label(finding).classes("text-xs text-slate-600 leading-snug")
-
-                # Right: Action protocol
-                with ui.column().classes("gap-2 bg-slate-50 p-4 rounded-lg border border-slate-200"):
-                    ui.label("Recommended Management Plan:").classes("text-xs font-bold text-slate-700")
-                    for act in details["recommendations"]:
-                        with ui.row().classes("items-start gap-2"):
-                            ui.icon("check", size="14px").classes("text-emerald-600 mt-0.5")
-                            ui.label(act).classes("text-xs text-slate-600 leading-snug")
 
 
 # ---------------------------------------------------------------------------

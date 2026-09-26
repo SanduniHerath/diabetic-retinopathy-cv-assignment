@@ -187,6 +187,172 @@ CLINICAL_DETAILS: Dict[str, Dict[str, Any]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Patient-Facing Plain-Language Content (NHS DESP / LumineticsCore style)
+# ---------------------------------------------------------------------------
+PATIENT_DETAILS: Dict[str, Dict[str, Any]] = {
+    "No_DR": {
+        "status_emoji": "✅",
+        "status_color": "green",
+        "headline": "Good news — no signs of diabetic eye disease were found.",
+        "plain_summary": (
+            "The AI scan of your retinal photograph did not find any signs that diabetes "
+            "has been affecting the blood vessels in your eye. Your retina looks healthy at this time."
+        ),
+        "why_it_matters": (
+            "This is a reassuring result. However, diabetic eye disease can develop silently "
+            "without any symptoms — which is exactly why regular screening every year is so important, "
+            "even when your eyes feel completely fine."
+        ),
+        "next_step": "Continue your annual diabetic eye screening as scheduled. No specialist referral is needed right now.",
+        "appointment_urgency": "none",
+        "prep_checklist": [],
+        "emergency_warning": None,
+        "daily_tips": [
+            "Keep your HbA1c below 7.0% (53 mmol/mol) — ask your GP if you are unsure of your level.",
+            "Aim for blood pressure below 130/80 mmHg.",
+            "Attend your eye screening every year, even when your eyes feel normal.",
+            "If you notice sudden floaters, flashes, or a dark curtain over your vision, contact your eye doctor the same day.",
+        ],
+    },
+    "Mild": {
+        "status_emoji": "🟡",
+        "status_color": "amber",
+        "headline": "Early changes were detected — a routine eye check is recommended.",
+        "plain_summary": (
+            "The scan found very early signs that diabetes is beginning to affect the tiny blood vessels "
+            "in your retina. These are called microaneurysms — small bulges in the vessel walls. "
+            "At this stage, your vision is not affected and treatment is not usually needed yet."
+        ),
+        "why_it_matters": (
+            "Finding this early is actually good news — it means there is time to slow or even stop "
+            "the progression with better blood sugar and blood pressure control. "
+            "Studies show that over 90% of serious sight loss from diabetic eye disease can be prevented "
+            "with timely care and good diabetes management."
+        ),
+        "next_step": "Ask your GP or diabetes nurse to arrange an eye specialist check within the next 6 to 12 months.",
+        "appointment_urgency": "routine",
+        "prep_checklist": [
+            "Bring sunglasses — your pupils will be dilated with eye drops, making bright light uncomfortable for a few hours.",
+            "Do not drive yourself — the dilating drops will blur your vision for 4 to 6 hours.",
+            "Bring a list of all your current medications.",
+            "Tell your eye specialist your most recent HbA1c and blood pressure readings.",
+        ],
+        "emergency_warning": None,
+        "daily_tips": [
+            "Work with your diabetes team to bring your HbA1c below 7.0% (53 mmol/mol).",
+            "Reduce salt intake and aim for blood pressure below 130/80 mmHg.",
+            "Stop smoking — smoking dramatically speeds up diabetic eye disease.",
+            "Attend all follow-up eye appointments, even if your vision feels completely normal.",
+        ],
+    },
+    "Moderate": {
+        "status_emoji": "🟠",
+        "status_color": "amber",
+        "headline": "Noticeable changes were found — please see an eye specialist soon.",
+        "plain_summary": (
+            "The scan found several areas in your retina where diabetes has caused blood vessel damage. "
+            "There are signs of bleeding and leakage from the small blood vessels. "
+            "Your central vision may not be affected yet, but this needs to be checked by an eye specialist."
+        ),
+        "why_it_matters": (
+            "At this stage, there is a risk that fluid could build up near the centre of your retina (called macular oedema), "
+            "which can blur your vision. An eye specialist can detect this before it affects your sight and begin treatment early. "
+            "With timely care, most people at this stage keep good vision."
+        ),
+        "next_step": "See an eye specialist (ophthalmologist) within the next 3 to 6 months. Ask your GP for a referral as soon as possible.",
+        "appointment_urgency": "routine",
+        "prep_checklist": [
+            "Bring sunglasses — your pupils will be dilated with eye drops, making bright light uncomfortable for a few hours.",
+            "Do not drive — dilating drops will blur your vision for 4 to 6 hours. Arrange a lift.",
+            "Bring a list of all your current medications, especially blood pressure and diabetes tablets.",
+            "Tell your specialist your most recent HbA1c, blood pressure, and cholesterol readings.",
+            "You may be offered a painless eye scan called OCT (Optical Coherence Tomography).",
+        ],
+        "emergency_warning": None,
+        "daily_tips": [
+            "Contact your GP this week to arrange a referral to an ophthalmologist.",
+            "Prioritise bringing your HbA1c below 7.0% and blood pressure below 130/80 mmHg.",
+            "Avoid smoking — it is one of the strongest risk factors for rapid progression.",
+            "If you develop sudden blurry vision or see floaters before your appointment, go to A&E immediately.",
+        ],
+    },
+    "Severe": {
+        "status_emoji": "🔴",
+        "status_color": "red",
+        "headline": "Significant changes found — please contact your GP urgently for a specialist referral.",
+        "plain_summary": (
+            "The scan found widespread damage to the blood vessels in your retina caused by diabetes. "
+            "There are signs of bleeding in multiple areas of the eye. "
+            "Although your vision may feel acceptable right now, there is a high risk of serious sight loss "
+            "if this is not treated promptly."
+        ),
+        "why_it_matters": (
+            "At this stage, called Severe NPDR, your retina is under significant stress and new abnormal blood vessels "
+            "may start growing within the coming months. These new vessels are fragile and can bleed suddenly, "
+            "causing rapid vision loss. An urgent appointment with a retina specialist is essential — "
+            "early treatment can protect your sight."
+        ),
+        "next_step": "Contact your GP today and ask for an urgent referral to a retina specialist. You should be seen within 2 to 4 weeks.",
+        "appointment_urgency": "urgent",
+        "prep_checklist": [
+            "Bring sunglasses — your pupils will be dilated with eye drops.",
+            "Do not drive — arrange a lift for your appointment.",
+            "Bring all your medication bottles or a medication list.",
+            "Tell your specialist your HbA1c, blood pressure, and kidney function results if you have them.",
+            "You may be offered laser treatment or an eye injection — ask your specialist to explain what is planned.",
+        ],
+        "emergency_warning": (
+            "If you notice a sudden shower of dark floaters, flashing lights, or a dark curtain "
+            "coming across your vision — go to your nearest A&E eye emergency department immediately. "
+            "Do not wait. This could mean a blood vessel has burst inside your eye."
+        ),
+        "daily_tips": [
+            "Call your GP today — do not delay this referral.",
+            "Avoid heavy lifting, straining, or bending with your head below your waist until you have been seen.",
+            "Strictly follow all blood sugar and blood pressure medications prescribed by your team.",
+            "Do not ignore any new changes to your vision — treat them as an emergency.",
+        ],
+    },
+    "Proliferative_DR": {
+        "status_emoji": "🚨",
+        "status_color": "red",
+        "headline": "Urgent: New abnormal blood vessels detected — please seek care immediately.",
+        "plain_summary": (
+            "The scan found new, abnormal blood vessels growing inside your eye — a condition called "
+            "Proliferative Diabetic Retinopathy. These new vessels are fragile and can bleed without warning, "
+            "causing sudden and potentially permanent vision loss. This requires urgent medical attention."
+        ),
+        "why_it_matters": (
+            "This is the most advanced stage of diabetic eye disease. Without treatment, there is a high risk "
+            "of a large bleed inside the eye or the retina being pulled away from the back of the eye — "
+            "both of which can cause severe, permanent blindness. "
+            "With urgent laser treatment or eye injections, vision can often be saved or preserved."
+        ),
+        "next_step": "Go to your nearest eye emergency department or contact your eye specialist today. Do not wait for a routine appointment.",
+        "appointment_urgency": "emergency",
+        "prep_checklist": [
+            "Go to your nearest hospital eye emergency department or call your eye specialist immediately.",
+            "Do not drive under any circumstances.",
+            "Do not do any strenuous exercise or heavy lifting.",
+            "Bring all your medication information with you.",
+            "Treatment such as laser therapy or an eye injection may be started the same day.",
+        ],
+        "emergency_warning": (
+            "URGENT: If you experience any sudden vision loss, a large dark floater, flashing lights, "
+            "or a dark shadow over part of your vision — go to A&E immediately. "
+            "Do not drive. This is a medical emergency."
+        ),
+        "daily_tips": [
+            "Seek emergency eye care today — every day of delay increases the risk of permanent sight loss.",
+            "Until seen by a specialist: no heavy lifting, no straining, keep your head upright.",
+            "Follow all diabetes and blood pressure medication instructions exactly as prescribed.",
+            "Ensure someone is with you at all times until you have been assessed.",
+        ],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Configuration: Toggle between Mock Prediction and Real Model Checkpoint
 # ---------------------------------------------------------------------------
 DEFAULT_CHECKPOINT = _REPO_ROOT / "reports" / "training" / "best_model.pth"
