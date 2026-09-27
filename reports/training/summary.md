@@ -54,15 +54,13 @@ The original APTOS-only training set (2,563 images) had extreme class imbalance:
 
 EyePACS (Kaggle EyePACS Diabetic Retinopathy Detection challenge) provides ~88,000 fundus photographs graded on the same 0-4 ICDR scale. 500 images per grade were selectively sampled and added to the APTOS training split for the two most under-represented grades.
 
-### Staged EyePACS Ingestion
+### Supplementary EyePACS Ingestion
 
-**Phase A — Initial ingestion (Mild + Severe + Proliferative_DR):**
-All three minority grades were supplemented. Mild was initially included because its training count (259 images) appeared insufficient.
+**Classes Supplemented (Mild + Severe + Proliferative_DR):**
+All three minority grades were supplemented with ~500 images each. Mild was included because its initial APTOS training count (259 images) was low.
 
-**Phase B — Mild rollback (see §4 below):**
-Post-ingestion evaluation showed that adding EyePACS Mild images *degraded* Mild F1 from 0.56 → 0.35. This finding indicated domain shift between EyePACS Mild and APTOS Mild images. Mild EyePACS images were rolled back.
-
-**Final state: Severe + Proliferative_DR only.**
+**Current Model & Evaluation State:**
+The evaluated model reported in this summary was trained on the dataset with EyePACS images for Mild, Severe, and Proliferative_DR. Post-evaluation analysis revealed that while Severe and Proliferative_DR improved significantly, Mild experienced an F1 regression (0.56 → 0.35) due to domain shift. Removing the EyePACS Mild images and re-evaluating is scheduled as future work (see §4).
 
 ---
 
@@ -97,7 +95,9 @@ Post-ingestion evaluation showed that adding EyePACS Mild images *degraded* Mild
 
 ### What Happened
 
-Despite an overall accuracy improvement from ~74% to 80.33%, the Mild class (Grade 1) showed a notable **F1 regression** from approximately 0.56 (APTOS-only baseline) to 0.35 (final model). This is a genuine finding, not an artefact, and is reported transparently.
+Despite an overall accuracy improvement from ~74% to 80.33%, the Mild class (Grade 1) showed a notable **F1 regression** from approximately 0.56 (APTOS-only baseline) to 0.35 in the final evaluated model. This is a genuine finding, not an artefact, and is reported transparently.
+
+> **Important:** The F1 score of 0.35 was measured on the model trained **with EyePACS Mild images still included** in the training set. Removing those images and re-evaluating is a planned future action that has **not yet been carried out**. The current model and all reported metrics reflect the state with EyePACS Mild data present.
 
 Looking at the confusion matrix, Mild is disproportionately misclassified as **Moderate (52.7% of Mild errors)** and **No_DR (21.8%)**:
 
@@ -115,11 +115,7 @@ The most plausible explanation is **domain shift** between EyePACS and APTOS Mil
 
 2. **Labelling granularity:** Grade 1 is the most subjectively graded ICDR stage. EyePACS used an adjudicated consensus of 5 graders, while APTOS used a local clinical grading protocol. The two datasets likely have slightly different threshold criteria for the Mild/No_DR and Mild/Moderate boundaries.
 
-3. **Model confusion mechanism:** When the model was trained with both APTOS and EyePACS Mild images that have inconsistent visual signatures, it learned a less discriminative Mild representation. The classifier began defaulting to the adjacent dominant class (Moderate) when uncertain, which explains the high Mild → Moderate error rate.
-
-### Why This Was Not Fully Remediated by Rolling Back
-
-After Mild EyePACS images were removed, the Mild training count returned to ~759 APTOS images (after prior partial ingestion) and augmented to ~1,518 with x2 dynamic multiplier. Despite this, the test-set Mild F1 remained at 0.35, suggesting that Stage 2 fine-tuning may have over-fit to Moderate features during the period when EyePACS Mild images were present.
+3. **Model confusion mechanism:** When the model is trained with both APTOS and EyePACS Mild images that have inconsistent visual signatures, it learns a less discriminative Mild representation. The classifier defaults to the adjacent dominant class (Moderate) when uncertain, which explains the high Mild → Moderate error rate.
 
 ### Clinical Risk Assessment
 
@@ -131,9 +127,10 @@ The Mild F1 regression carries **lower clinical risk** than it might initially a
 
 ### Recommendations for Future Work
 
-1. **APTOS-only fine-tuning pass:** A short 3rd training stage using only APTOS data may re-specialise the Mild classifier to APTOS-consistent Mild features.
-2. **Domain adaptation:** Histogram normalisation or CycleGAN-based style transfer could harmonise EyePACS images to APTOS colour space before ingestion.
-3. **Confidence thresholding:** In clinical deployment, predictions with confidence < 0.7 for Mild could be flagged for human review rather than auto-classified.
+1. **Remove EyePACS Mild and re-train:** The primary planned remediation is to roll back the EyePACS Mild ingestion, retrain from the Stage 1 checkpoint, and re-evaluate on the same test set to determine whether the Mild F1 recovers toward the APTOS-only baseline (~0.56). This has not yet been done.
+2. **Domain adaptation:** Histogram normalisation or CycleGAN-based style transfer could harmonise EyePACS images to APTOS colour space before ingestion, potentially allowing EyePACS Mild images to be re-included safely.
+3. **APTOS-only fine-tuning pass:** If EyePACS Mild removal alone does not suffice, a short additional fine-tuning stage restricted to APTOS Mild data may re-specialise the classifier.
+4. **Confidence thresholding:** In clinical deployment, predictions with confidence < 0.7 for Mild could be flagged for human review rather than auto-classified.
 
 ---
 

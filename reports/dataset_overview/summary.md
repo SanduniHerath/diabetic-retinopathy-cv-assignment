@@ -128,20 +128,20 @@ The sample montage (`sample_montage.png`) shows 3 representative fundus photogra
 
 Following the initial APTOS-only split, a targeted supplementary ingestion step was performed to address the severe under-representation of minority DR grades in the training partition. Images from the **EyePACS** public dataset (Kaggle EyePACS Diabetic Retinopathy Detection challenge) were selectively added **exclusively to `data/split/train/`**. The validation and test sets were **not touched under any circumstances**.
 
-### Staged Ingestion History
+### Supplementary Ingestion History & Planned Next Steps
 
-| Stage | Classes Supplemented | Reason |
-|:------|:---------------------|:-------|
-| **Initial EyePACS ingestion** | Mild (Grade 1), Severe (Grade 3), Proliferative_DR (Grade 4) | All three were severely under-represented in the APTOS-only training split |
-| **Mild rollback** | Mild images removed after regression detected | EyePACS Mild images differ substantially from APTOS Mild in camera calibration and labelling granularity; ingesting them caused a Mild F1 regression rather than improvement (see `reports/training/summary.md` §4) |
-| **Final state** | **Severe + Proliferative_DR only** | Only grades where EyePACS images visually and clinically matched APTOS image characteristics |
+| Stage | Classes Supplemented | Status & Details |
+|:------|:---------------------|:-----------------|
+| **EyePACS supplementation** | Mild (Grade 1), Severe (Grade 3), Proliferative_DR (Grade 4) | Ingested to address severe minority class under-representation in APTOS training split (~500 samples per class) |
+| **Mild rollback** | Mild images removal | **Planned future work** — Post-evaluation revealed domain shift causing Mild F1 regression; removing Mild EyePACS and re-evaluating is scheduled as the next step (see `reports/training/summary.md` §4) |
+| **Current training state** | Mild + Severe + Proliferative_DR supplemented | Current trained model reflects training set with Mild, Severe, and Proliferative_DR EyePACS data |
 
-### Final Training Set Counts After EyePACS Addition
+### Training Set Counts with EyePACS Addition (Current State)
 
-| Label | Class | APTOS-only (original) | After EyePACS supplementation |
-|:-----:|:------|:---------------------:|:-----------------------------:|
+| Label | Class | APTOS-only (original) | Current (with EyePACS) |
+|:-----:|:------|:---------------------:|:----------------------:|
 | 0 | No_DR | 1,264 | 1,264 (unchanged) |
-| 1 | Mild | 259 | 759 (later rolled back to ~259 original level) |
+| 1 | Mild | 259 | **759** (+500 EyePACS; rollback planned) |
 | 2 | Moderate | 699 | 699 (unchanged) |
 | 3 | Severe | 135 | **635** (+500 EyePACS) |
 | 4 | Proliferative_DR | 206 | **706** (+500 EyePACS) |

@@ -113,7 +113,7 @@ Re-running `python src/augmentation.py` with `RANDOM_SEED = 42` always produces 
 data/split/
     train/                      # Training images after EyePACS supplementation [READ ONLY]
         No_DR/         (1,264 images — APTOS only)
-        Mild/          (759 images — APTOS only, after Mild EyePACS rollback)
+        Mild/          (759 images — 259 APTOS + 500 EyePACS)
         Moderate/      (699 images — APTOS only)
         Severe/        (635 images — 135 APTOS + 500 EyePACS)
         Proliferative_DR/ (706 images — 206 APTOS + 500 EyePACS)
