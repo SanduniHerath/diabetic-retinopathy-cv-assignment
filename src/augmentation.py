@@ -108,31 +108,22 @@ AUGMENTATION TECHNIQUES -- CLINICAL JUSTIFICATION
 
 CLASS BALANCING STRATEGY
 -------------------------
-Differential augmentation multipliers are applied per class to bring
-counts close to parity, reducing the effective imbalance.
+Multipliers are computed DYNAMICALLY from the live class counts each
+time the script runs.  The formula is:
 
-The exact per-class counts in data/split/train/ are determined at
-runtime by scanning the folder directly, so the reported BEFORE table
-always reflects the *actual* files on disk (not a hardcoded snapshot).
+    multiplier(cls) = max(1, round(target_count / live_count(cls)))
 
-  Class            | Mult
-  No_DR            |  x1  (dominant -- no inflation)
-  Mild             |  x5
-  Moderate         |  x2
-  Severe           |  x9  (highest clinical risk)
-  Proliferative_DR |  x6
+where target_count (default 1,500; overridable via --target) is the
+desired final count per class after augmentation.  Using 1 as a floor
+ensures that classes already above the target are never dropped.
 
-Severe receives the highest multiplier (x9) because:
-  (a) It is the rarest class in the training split (135 images).
-  (b) Misclassifying Severe as a lower stage delays treatment and risks
-      preventable blindness -- the clinical cost of false negatives is
-      highest for this grade.
+This approach is self-correcting: any future dataset ingestion (e.g.
+EyePACS, Messidor) automatically adjusts multipliers at the next run
+without any code change.  No hardcoded multiplier table is needed.
 
-No_DR is not augmented (x1) because:
-  (a) It is already the dominant class; additional copies would worsen
-      the imbalance in the opposite direction.
-  (b) Computational cost -- augmenting 1,264 images x9 would create
-      ~11,000 copies of the easiest class with no diversity benefit.
+A DYNAMIC MULTIPLIERS table is printed before augmentation begins,
+showing the live count, computed multiplier, and projected final count
+for every class, so results can be verified at a glance.
 
 REPRODUCIBILITY
 ---------------
@@ -149,6 +140,9 @@ Usage
 
     # Full pipeline: generate balanced training dataset + demo examples
     python src/augmentation.py
+
+    # Custom target count (default 1500 per class)
+    python src/augmentation.py --target 2000
 
     # Report-only: demo strips and comparison chart without full dataset
     python src/augmentation.py --report-only --samples 3
@@ -191,24 +185,14 @@ CLASSES = ["No_DR", "Mild", "Moderate", "Severe", "Proliferative_DR"]
 # There is NO hardcoded TRAIN_COUNTS dict -- that was the source of stale
 # numbers when new images were added via EyePACS ingestion.
 
-# Per-class augmentation multipliers.
-# multiplier=1 means only originals are kept (no augmented copies added).
-# multiplier=N means (N-1) augmented copies are created per original image,
-# so the final count = original_count * N.
+# Per-class augmentation multipliers are computed DYNAMICALLY at runtime
+# by compute_multipliers() (see below).  There is NO hardcoded MULTIPLIERS
+# dict -- fixed multipliers go stale whenever dataset ingestion changes
+# class counts, causing imbalance to worsen rather than improve.
 #
-# Reasoning:
-#   No_DR (x1): Already dominant. Augmenting would worsen imbalance.
-#   Mild (x5):  2nd rarest; needs substantial boost.
-#   Moderate (x2): Mid-range; modest boost suffices.
-#   Severe (x9): Rarest class; highest clinical risk.
-#   Proliferative_DR (x6): 3rd rarest.
-MULTIPLIERS: Dict[str, int] = {
-    "No_DR": 1,
-    "Mild": 5,
-    "Moderate": 2,
-    "Severe": 9,
-    "Proliferative_DR": 6,
-}
+# Formula:  multiplier(cls) = max(1, round(DEFAULT_TARGET_COUNT / live_count))
+# Override the target with the --target CLI flag.
+DEFAULT_TARGET_COUNT: int = 1500  # desired images per class after augmentation
 
 # Augmentation hyper-parameters
 ROT_LIMIT_DEG: int = 30          # Maximum rotation angle in degrees (+-30)
@@ -320,7 +304,7 @@ def augment_image(img_bgr: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# FILESYSTEM SCAN HELPER
+# FILESYSTEM SCAN & MULTIPLIER HELPERS
 # ---------------------------------------------------------------------------
 
 
@@ -357,6 +341,45 @@ def count_class_images(input_dir: str) -> Dict[str, int]:
         else:
             counts[cls] = 0
     return counts
+
+
+def compute_multipliers(
+    counts: Dict[str, int],
+    target: int = DEFAULT_TARGET_COUNT,
+) -> Dict[str, int]:
+    """
+    Compute per-class augmentation multipliers dynamically from live counts.
+
+    Formula::
+
+        multiplier(cls) = max(1, round(target / count(cls)))
+
+    A floor of 1 guarantees that classes already at or above *target* are
+    still copied to the output folder without being duplicated.  There is
+    no hardcoded cap -- if a class has very few images a high multiplier
+    is appropriate and expected.
+
+    Parameters
+    ----------
+    counts : Dict[str, int]
+        Live per-class image counts from ``count_class_images()``.
+    target : int
+        Desired final count per class after augmentation.
+        Defaults to ``DEFAULT_TARGET_COUNT``.
+
+    Returns
+    -------
+    Dict[str, int]
+        Per-class integer multipliers, all >= 1.
+    """
+    multipliers: Dict[str, int] = {}
+    for cls in CLASSES:
+        n = counts.get(cls, 0)
+        if n == 0:
+            multipliers[cls] = 1  # avoid ZeroDivisionError; folder is empty
+        else:
+            multipliers[cls] = max(1, round(target / n))
+    return multipliers
 
 
 # ---------------------------------------------------------------------------
@@ -630,9 +653,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
     dry_run: bool = args.dry_run
     report_only: bool = getattr(args, "report_only", False)
     n_samples: int = args.samples
+    target: int = getattr(args, "target", DEFAULT_TARGET_COUNT)
 
     # Safety check: refuse to write into val/ or test/
-    # (abs_input is also used below for the verification block)
     abs_input = os.path.abspath(input_dir)
     for forbidden in ["val", "test"]:
         forbidden_path = os.path.abspath(
@@ -648,17 +671,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Compute before / after distributions by SCANNING THE FOLDER LIVE.
-    # Never read from a hardcoded constant -- that caused stale numbers.
+    # Step 1: Scan folder live -- never read a hardcoded constant.
     # ------------------------------------------------------------------
     before_counts = count_class_images(input_dir)
-    after_counts = {
-        cls: before_counts[cls] * MULTIPLIERS[cls] for cls in CLASSES
-    }
 
-    # Filesystem verification block -- mirrors 'ls <class_dir> | wc -l'
-    # so callers can confirm the reported count matches actual disk state.
-    abs_input = os.path.abspath(input_dir)  # re-use later for safety check
+    # Filesystem verification block (mirrors 'ls <class_dir>/ | wc -l')
     print()
     print("=" * 70)
     print("  FILESYSTEM VERIFICATION  (live scan of", abs_input, ")")
@@ -667,23 +684,58 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"  {'Class':<20} {'Files on disk':>14}")
     print(f"  {'-'*20} {'-'*14}")
     for cls in CLASSES:
-        cls_dir = os.path.join(input_dir, cls)
-        n = before_counts[cls]
-        print(f"  {cls:<20} {n:>14,}")
+        print(f"  {cls:<20} {before_counts[cls]:>14,}")
     print(f"  {'-'*20} {'-'*14}")
     print(f"  {'TOTAL':<20} {sum(before_counts.values()):>14,}")
     print("=" * 70)
     print()
 
-    # Print before table (counts come from the live scan above)
+    # ------------------------------------------------------------------
+    # Step 2: Compute multipliers DYNAMICALLY from the live counts.
+    # ------------------------------------------------------------------
+    multipliers = compute_multipliers(before_counts, target=target)
+    after_counts = {
+        cls: before_counts[cls] * multipliers[cls] for cls in CLASSES
+    }
+
+    # Print the dynamic multipliers table so the user can verify them
+    # before anything is written to disk.
+    print()
+    print("=" * 70)
+    print(f"  DYNAMIC MULTIPLIERS  (target = {target:,} images per class)")
+    print("=" * 70)
+    print(
+        f"  {'Class':<20} {'Live count':>10}   {'Multiplier':>10}   "
+        f"{'Projected':>10}   {'vs target':>9}"
+    )
+    print(f"  {'-'*20} {'-'*10}   {'-'*10}   {'-'*10}   {'-'*9}")
+    for cls in CLASSES:
+        n = before_counts[cls]
+        m = multipliers[cls]
+        proj = n * m
+        delta = proj - target
+        sign = "+" if delta >= 0 else ""
+        print(
+            f"  {cls:<20} {n:>10,}   {m:>10}x   "
+            f"{proj:>10,}   {sign}{delta:>8,}"
+        )
+    proj_values = list(after_counts.values())
+    ir_after = max(proj_values) / min(proj_values) if proj_values else 1.0
+    print(f"  {'-'*20} {'-'*10}   {'-'*10}   {'-'*10}   {'-'*9}")
+    print(f"  {'TOTAL':<20} {sum(before_counts.values()):>10,}   "
+          f"{'':>10}    {sum(proj_values):>10,}")
+    print(f"  Projected imbalance ratio after augmentation: {ir_after:.2f}x")
+    print("=" * 70)
+    print()
+
+    # Print full before / after distribution tables
     print_distribution_table(
         before_counts, "TRAINING SET -- BEFORE AUGMENTATION (data/split/train/)"
     )
-
-    # Print after table
     print_distribution_table(
         after_counts,
-        "TRAINING SET -- AFTER AUGMENTATION (data/split/train_augmented/)"
+        f"TRAINING SET -- AFTER AUGMENTATION (data/split/train_augmented/)  "
+        f"[target={target:,}]"
     )
 
     # Always save the comparison chart (even in dry-run)
@@ -695,14 +747,16 @@ def run_pipeline(args: argparse.Namespace) -> None:
         print("Dry run completed successfully.  No image files written.")
         return
 
-    # Run per-class balancing
+    # ------------------------------------------------------------------
+    # Step 3: Run per-class balancing with the computed multipliers.
+    # ------------------------------------------------------------------
     rng = np.random.default_rng(RANDOM_SEED)
     t0 = time.time()
 
     for cls in CLASSES:
-        mult = MULTIPLIERS[cls] if not report_only else 1
+        mult = multipliers[cls] if not report_only else 1
         print(
-            f"  Processing {cls:<20} (x{MULTIPLIERS[cls]}) ...",
+            f"  Processing {cls:<20} (x{multipliers[cls]}) ...",
             end=" ", flush=True,
         )
         n_out = balance_class(
@@ -790,6 +844,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Show a 7-panel demo strip for a single image file and exit. "
             "Output saved to --report directory."
+        ),
+    )
+    parser.add_argument(
+        "--target", type=int, default=DEFAULT_TARGET_COUNT,
+        metavar="N",
+        help=(
+            "Target number of images per class after augmentation. "
+            "Multipliers are computed as max(1, round(target / live_count)). "
+            "(default: %(default)s)"
         ),
     )
     return parser.parse_args()
