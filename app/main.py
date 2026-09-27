@@ -63,7 +63,7 @@ state: Dict[str, Any] = {
     "current_result": None,
     "patient_id": "PT-2026-0842",
     "eye": "OD (Right Eye)",
-    "use_mock": True,
+    "use_mock": False,
     "patient_mode": False,          # False = Clinician View, True = Patient View
     "symptom_flags": {              # Patient-reported emergency symptoms
         "floaters": None,
@@ -159,23 +159,30 @@ def run_screening_analysis(
 
 async def handle_file_upload(e: events.UploadEventArguments):
     """Handles drag-and-drop or file selector uploads."""
-    name = "uploaded_fundus.png"
-    image_bytes = b""
+    name: str = "uploaded_fundus.png"
+    image_bytes: bytes = b""
     try:
-        if hasattr(e, "file"):
-            file_obj = getattr(e, "file")
+        content_obj: Any = getattr(e, "content", None)
+        file_obj: Any = getattr(e, "file", None)
+        if file_obj is not None:
             name = getattr(file_obj, "name", "uploaded_fundus.png")
             read_fn = getattr(file_obj, "read", None)
             if callable(read_fn):
-                read_res = read_fn()
+                read_res: Any = read_fn()
                 if hasattr(read_res, "__await__"):
-                    image_bytes = await read_res
-                else:
-                    image_bytes = read_res
-        elif hasattr(e, "content"):
+                    image_bytes = bytes(await read_res)
+                elif isinstance(read_res, (bytes, bytearray)):
+                    image_bytes = bytes(read_res)
+        elif content_obj is not None:
             name = getattr(e, "name", "uploaded_fundus.png")
-            content = getattr(e, "content")
-            image_bytes = content.read() if hasattr(content, "read") else b""
+            if hasattr(content_obj, "read"):
+                res: Any = content_obj.read()
+                if hasattr(res, "__await__"):
+                    image_bytes = bytes(await res)
+                elif isinstance(res, (bytes, bytearray)):
+                    image_bytes = bytes(res)
+            elif isinstance(content_obj, (bytes, bytearray)):
+                image_bytes = bytes(content_obj)
     except Exception as upload_err:
         safe_notify(f"Upload error: {upload_err}", type="negative")
         print(f"[Upload Error] {upload_err}")
@@ -193,13 +200,13 @@ def load_sample(class_name: str):
         with open(SAMPLE_IMAGES[class_name], "rb") as f:
             image_bytes = f.read()
         state["patient_id"] = f"PT-{class_name[:3].upper()}-9104"
-        run_screening_analysis(image_bytes, filename=f"sample_{class_name}.png", target_class=class_name)
+        run_screening_analysis(image_bytes, filename=f"sample_{class_name}.png", target_class=None)
     else:
         # Fallback: create synthetic fundus scan
         img = Image.new("RGB", (224, 224), color=(30, 20, 10))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        run_screening_analysis(buf.getvalue(), filename=f"sample_{class_name}.png", target_class=class_name)
+        run_screening_analysis(buf.getvalue(), filename=f"sample_{class_name}.png", target_class=None)
 
 
 def download_pdf():
@@ -300,7 +307,8 @@ with ui.header().classes("bg-slate-900 text-white px-6 py-3 flex items-center ju
         # Engine indicator badge
         with ui.row().classes("items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300"):
             ui.html('<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>')
-            mode_label = ui.label("Engine: Clinical Simulation (Mock Mode)")
+            initial_text = "Engine: PyTorch CNN (best_model.pth)" if is_real_model_available() else "Engine: Clinical Simulation (Mock Mode)"
+            mode_label = ui.label(initial_text)
 
         def toggle_engine_mode():
             state["use_mock"] = not state["use_mock"]
@@ -314,7 +322,7 @@ with ui.header().classes("bg-slate-900 text-white px-6 py-3 flex items-center ju
                 else:
                     mode_label.set_text("Engine: Mock (No checkpoint found)")
                     state["use_mock"] = True
-                    safe_notify("best_model.pth not found in reports/training/. Remaining in Mock mode.", type="warning")
+                    safe_notify("best_model.pth not found in models/. Remaining in Mock mode.", type="warning")
 
         ui.button("Switch Engine", on_click=toggle_engine_mode).props("flat dense color=sky-300 size=sm").classes("text-xs capitalize")
 
@@ -397,7 +405,7 @@ with ui.column().classes("w-full max-w-7xl mx-auto p-4 md:p-6 gap-6"):
                     for cls_key, label_text, col in samples_meta:
                         ui.button(
                             label_text,
-                            on_click=lambda c=cls_key: load_sample(c),
+                            on_click=lambda _, c=cls_key: load_sample(c),
                         ).props(f"outline dense size=sm color={col}").classes("w-full text-xs justify-start px-3 py-1.5 font-medium")
 
         # -------------------------------------------------------------------
@@ -648,14 +656,14 @@ def _render_patient_view(res: dict):
                     with ui.row().classes("gap-2"):
                         ui.button(
                             "Yes",
-                            on_click=lambda k=flag_key: [
+                            on_click=lambda _, k=flag_key: [
                                 state["symptom_flags"].update({k: True}),
                                 update_symptom_warning(),
                             ],
                         ).props("unelevated dense size=sm color=red").classes("text-xs font-bold px-3")
                         ui.button(
                             "No",
-                            on_click=lambda k=flag_key: [
+                            on_click=lambda _, k=flag_key: [
                                 state["symptom_flags"].update({k: False}),
                                 update_symptom_warning(),
                             ],
@@ -795,7 +803,7 @@ with ui.column().classes("w-full max-w-7xl mx-auto px-4 md:px-6 pb-12 gap-4"):
             for query in quick_queries:
                 ui.button(
                     query,
-                    on_click=lambda q=query: send_quick_query(q),
+                    on_click=lambda _, q=query: send_quick_query(q),
                 ).props("flat dense size=xs color=slate-700").classes("text-[10px] bg-white border border-slate-200 px-2 py-1 rounded hover:bg-slate-100")
 
     # Bottom Mandatory Clinical Disclaimer

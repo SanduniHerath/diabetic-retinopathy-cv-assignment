@@ -353,42 +353,100 @@ PATIENT_DETAILS: Dict[str, Dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
-# Configuration: Toggle between Mock Prediction and Real Model Checkpoint
+# Configuration: Real Model Checkpoint & Model Cache
 # ---------------------------------------------------------------------------
-DEFAULT_CHECKPOINT = _REPO_ROOT / "reports" / "training" / "best_model.pth"
+CHECKPOINT_PATHS = [
+    _REPO_ROOT / "models" / "best_model.pth",
+    _REPO_ROOT / "reports" / "training" / "best_model_20260927_080359.pth",
+    _REPO_ROOT / "reports" / "training" / "best_model.pth",
+]
 _LOADED_MODEL = None
 _LOADED_DEVICE = None
 
 
+def get_checkpoint_path() -> Optional[Path]:
+    """Resolves the trained model checkpoint path, prioritizing /models/best_model.pth."""
+    for p in CHECKPOINT_PATHS:
+        if p.is_file() and p.stat().st_size > 1_000_000:
+            return p
+    return None
+
+
 def is_real_model_available() -> bool:
     """Checks whether a valid trained PyTorch checkpoint is present on disk."""
-    return DEFAULT_CHECKPOINT.is_file() and DEFAULT_CHECKPOINT.stat().st_size > 1_000_000
+    return get_checkpoint_path() is not None
 
 
 def get_real_model():
-    """Loads and caches the real PyTorch model checkpoint when available."""
+    """Loads and caches the real PyTorch model checkpoint using build_model()."""
     global _LOADED_MODEL, _LOADED_DEVICE
     if _LOADED_MODEL is not None:
         return _LOADED_MODEL, _LOADED_DEVICE
 
-    if not is_real_model_available():
+    chk_path = get_checkpoint_path()
+    if chk_path is None:
+        print("[Predictor] Note: No model checkpoint found on disk.")
         return None, None
 
     try:
         import torch
         from model import build_model
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = build_model(backbone_name="efficientnet_b0")
-        state = torch.load(str(DEFAULT_CHECKPOINT), map_location=device)
+        model = build_model(backbone_name="efficientnet_b0", num_classes=len(CLASS_NAMES), pretrained=False)
+        state = torch.load(str(chk_path), map_location=device)
         model.load_state_dict(state)
         model.to(device)
         model.eval()
         _LOADED_MODEL = model
         _LOADED_DEVICE = device
+        print(f"[Predictor] Successfully loaded model checkpoint from: {chk_path} on {device}")
         return _LOADED_MODEL, _LOADED_DEVICE
     except Exception as e:
-        print(f"[Predictor] Note: Could not load real model checkpoint: {e}")
+        print(f"[Predictor] Error loading model checkpoint: {e}")
         return None, None
+
+
+# ---------------------------------------------------------------------------
+# Preprocessing Pipeline (Phase 2 - Matching Training Exactly)
+# ---------------------------------------------------------------------------
+def preprocess_fundus_image(pil_img: Image.Image) -> Tuple[Any, np.ndarray]:
+    """
+    Applies the full Phase 2 reproducible preprocessing pipeline from src/preprocessing.py:
+      Step 1: Ben Graham circular crop (cv2.HoughCircles disc isolation, CROP_SCALE=0.9)
+      Step 2: CLAHE on L-channel (clip=2.0, tileGridSize=8x8)
+      Step 3: Gaussian blur noise removal (kernel=3x3, sigma=0)
+      Step 4: Unsharp masking edge enhancement (sigma=10, amount=1.5)
+      Step 5: 224x224 resize & ImageNet normalisation (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    Returns:
+      tensor: (1, 3, 224, 224) PyTorch float tensor ready for forward pass
+      rgb_224: (224, 224, 3) uint8 array of preprocessed fundus image
+    """
+    import torch
+    from preprocessing import circular_crop, apply_clahe, apply_noise_removal, apply_unsharp_mask
+
+    img_bgr = cv2.cvtColor(np.array(pil_img.convert("RGB"), dtype=np.uint8), cv2.COLOR_RGB2BGR)
+    h, w = img_bgr.shape[:2]
+
+    # Downscale high-resolution images to 512px first, exactly matching PreprocessingTransform in training
+    if max(h, w) > 512:
+        scale = 512.0 / max(h, w)
+        img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    crop = circular_crop(img_bgr)
+    clahe = apply_clahe(crop)
+    denoised = apply_noise_removal(clahe)
+    sharpened = apply_unsharp_mask(denoised)
+
+    resized = cv2.resize(sharpened, (224, 224), interpolation=cv2.INTER_AREA)
+    rgb_224 = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+
+    # ImageNet channel-wise normalization
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    norm = (rgb_224.astype(np.float32) / 255.0 - mean) / std
+    tensor = torch.from_numpy(norm).permute(2, 0, 1).unsqueeze(0).float()
+    return tensor, rgb_224
 
 
 # ---------------------------------------------------------------------------
@@ -397,57 +455,46 @@ def get_real_model():
 def generate_synthetic_gradcam(image_rgb: np.ndarray, class_name: str) -> np.ndarray:
     """
     Synthesizes a realistic Grad-CAM visual attention heatmap over the fundus photo
-    based on the predicted clinical stage (e.g. focusing on vessels, macula, or lesions).
+    based on the predicted clinical stage (used as fallback when mock mode is forced).
     """
     h, w = image_rgb.shape[:2]
-    # Work on a standard 300x300 working canvas
     canvas_size = 300
     resized_rgb = cv2.resize(image_rgb, (canvas_size, canvas_size), interpolation=cv2.INTER_AREA)
 
-    # Base attention grid
     y, x = np.ogrid[:canvas_size, :canvas_size]
     cx, cy = canvas_size // 2, canvas_size // 2
 
-    # Anatomical lesion center points
     heat_accum = np.zeros((canvas_size, canvas_size), dtype=np.float32)
 
     if class_name == "No_DR":
-        # Broad, low-intensity diffuse attention over the general retinal vascular arcade
         mask = np.exp(-((x - cx)**2 + (y - cy)**2) / (2 * 80**2))
         heat_accum += mask * 0.35
     elif class_name == "Mild":
-        # Small focal attention spots representing isolated microaneurysms
         spots = [(cx - 45, cy + 25), (cx + 50, cy - 30)]
         for sx, sy in spots:
             mask = np.exp(-((x - sx)**2 + (y - sy)**2) / (2 * 18**2))
             heat_accum += mask * 0.85
     elif class_name == "Moderate":
-        # Multiple moderate foci in temporal arcade and macular margin
         spots = [(cx - 55, cy + 30), (cx + 35, cy + 45), (cx - 20, cy - 50)]
         for sx, sy in spots:
             mask = np.exp(-((x - sx)**2 + (y - sy)**2) / (2 * 28**2))
             heat_accum += mask * 0.80
     elif class_name == "Severe":
-        # Multi-quadrant blot haemorrhage hotspots
         spots = [(cx - 60, cy - 40), (cx + 60, cy - 40), (cx - 50, cy + 50), (cx + 55, cy + 45)]
         for sx, sy in spots:
             mask = np.exp(-((x - sx)**2 + (y - sy)**2) / (2 * 32**2))
             heat_accum += mask * 0.85
     else:  # Proliferative_DR
-        # Intense focal hotspot at optic disc (NVD) and peripheral fronds
         spots = [(cx - 45, cy), (cx + 20, cy - 35), (cx + 70, cy + 20)]
         for sx, sy in spots:
             mask = np.exp(-((x - sx)**2 + (y - sy)**2) / (2 * 25**2))
             heat_accum += mask * 0.95
 
-    # Normalize to 0-255 uint8
     heat_norm = np.clip(heat_accum / (heat_accum.max() + 1e-6) * 255.0, 0, 255).astype(np.uint8)
     color_map = cv2.applyColorMap(heat_norm, cv2.COLORMAP_JET)
     color_map_rgb = cv2.cvtColor(color_map, cv2.COLOR_BGR2RGB)
 
-    # Alpha overlay
     overlay = cv2.addWeighted(resized_rgb, 0.62, color_map_rgb, 0.38, 0)
-    # Resize back to original dimensions
     final_overlay = cv2.resize(overlay, (w, h), interpolation=cv2.INTER_LINEAR)
     return final_overlay
 
@@ -457,7 +504,7 @@ def generate_synthetic_gradcam(image_rgb: np.ndarray, class_name: str) -> np.nda
 # ---------------------------------------------------------------------------
 def predict_image(
     image_bytes: bytes,
-    force_mock: bool = True,
+    force_mock: bool = False,
     patient_id: str = "PT-8291",
     eye: str = "OD (Right Eye)",
     target_class: Optional[str] = None,
@@ -467,13 +514,13 @@ def predict_image(
 
     Args:
         image_bytes: Raw binary bytes of uploaded image.
-        force_mock: If True, uses the realistic mock engine (default during development).
+        force_mock: If True, forces mock engine (defaults to False for real model inference).
         patient_id: Clinical patient identifier.
         eye: Examined eye notation (OD/OS).
-        target_class: Optional pre-set class to simulate (e.g. for clinical sample buttons).
+        target_class: Optional pre-set class to simulate when in mock mode.
 
     Returns:
-        Structured clinical screening results dictionary.
+        Structured clinical screening results dictionary matching UI requirements.
     """
     # 1. Decode image bytes to PIL and NumPy RGB
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -482,17 +529,26 @@ def predict_image(
     # 2. Check if real model should be used
     real_model, device = (None, None) if force_mock else get_real_model()
 
+    pred_idx: int = 0
+    predicted_class: str = CLASS_NAMES[0]
+    confidence: float = 0.0
+    probs: List[float] = [0.0] * len(CLASS_NAMES)
+    gradcam_rgb: np.ndarray = np_image_rgb
+    engine_mode: str = "PyTorch Deep CNN (EfficientNet-B0 Staged Fine-Tuned)"
+    inference_success: bool = False
+
     if real_model is not None and not force_mock:
         # Real model inference path
         try:
             import torch
             import torch.nn.functional as F
-            from train import get_val_transforms
             from gradcam import generate_gradcam_heatmap
 
-            transform = get_val_transforms()
-            tensor = transform(pil_image).unsqueeze(0).to(device)
+            # Step 1 & 2: Preprocess fundus image exactly matching training
+            tensor, _ = preprocess_fundus_image(pil_image)
+            tensor = tensor.to(device)
 
+            # Step 3: Real forward pass
             with torch.no_grad():
                 logits = real_model(tensor)
                 probs = F.softmax(logits, dim=1)[0].cpu().numpy().tolist()
@@ -501,21 +557,21 @@ def predict_image(
             predicted_class = CLASS_NAMES[pred_idx]
             confidence = float(probs[pred_idx])
 
-            # Generate real Grad-CAM heatmap
+            # Step 4: Real Grad-CAM heatmap generation
             heatmap_raw = generate_gradcam_heatmap(real_model, tensor, target_class=pred_idx)
             h, w = np_image_rgb.shape[:2]
-            heatmap_res = cv2.resize(heatmap_raw, (w, h))
+            heatmap_res = cv2.resize(heatmap_raw, (w, h), interpolation=cv2.INTER_LINEAR)
             heatmap_col = cv2.applyColorMap((heatmap_res * 255).astype(np.uint8), cv2.COLORMAP_JET)
             heatmap_rgb = cv2.cvtColor(heatmap_col, cv2.COLOR_BGR2RGB)
             gradcam_rgb = cv2.addWeighted(np_image_rgb, 0.60, heatmap_rgb, 0.40, 0)
             engine_mode = "PyTorch Deep CNN (EfficientNet-B0 Staged Fine-Tuned)"
+            inference_success = True
         except Exception as e:
-            print(f"[Predictor] Fallback to mock inference due to: {e}")
-            real_model = None
+            print(f"[Predictor] Fallback to mock inference due to error: {e}")
+            inference_success = False
 
-    if real_model is None:
-        # Mock prediction path (as requested by user requirements)
-        # Select specified target_class or random class from CLASS_NAMES
+    if not inference_success:
+        # Mock prediction path (fallback)
         if target_class and target_class in CLASS_NAMES:
             pred_idx = CLASS_NAMES.index(target_class)
         else:
