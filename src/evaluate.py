@@ -150,23 +150,28 @@ def quadratic_weighted_kappa(y_true: np.ndarray, y_pred: np.ndarray, n: int) -> 
       0.61 – 0.80: Substantial
       0.81 – 1.00: Almost perfect
     """
-    # Weight matrix: w[i,j] = ((i-j)/(n-1))^2
-    w = np.zeros((n, n), dtype=np.float64)
-    for i in range(n):
-        for j in range(n):
-            w[i, j] = ((i - j) / (n - 1)) ** 2
+    try:
+        from sklearn.metrics import cohen_kappa_score
+        return float(cohen_kappa_score(y_true, y_pred, weights="quadratic"))
+    except ImportError:
+        # Weight matrix: w[i,j] = ((i-j)/(n-1))^2
+        w = np.zeros((n, n), dtype=np.float64)
+        for i in range(n):
+            for j in range(n):
+                w[i, j] = ((i - j) / (n - 1)) ** 2
 
-    hist_true = np.bincount(y_true, minlength=n).astype(np.float64)
-    hist_pred = np.bincount(y_pred, minlength=n).astype(np.float64)
-    E = np.outer(hist_true, hist_pred) / len(y_true)
+        hist_true = np.bincount(y_true, minlength=n).astype(np.float64)
+        hist_pred = np.bincount(y_pred, minlength=n).astype(np.float64)
+        E = np.outer(hist_true, hist_pred)
+        E /= (E.sum() + 1e-9)
 
-    O = compute_confusion_matrix(y_true, y_pred, n).astype(np.float64)
-    O /= O.sum()
+        O = compute_confusion_matrix(y_true, y_pred, n).astype(np.float64)
+        O /= (O.sum() + 1e-9)
 
-    num = (w * O).sum()
-    den = (w * E).sum()
-    kappa = 1.0 - num / (den + 1e-9)
-    return float(kappa)
+        num = (w * O).sum()
+        den = (w * E).sum()
+        kappa = 1.0 - num / (den + 1e-9)
+        return float(kappa)
 
 
 # ===========================================================================
@@ -435,6 +440,7 @@ def run_evaluation(
     num_workers: int = 2,
     generate_gradcam: bool = True,
     gradcam_samples: int = 3,
+    fast_loader: bool = False,
 ) -> Dict[str, Any]:
     """
     Loads the best checkpoint, runs inference on the test split, and generates
@@ -442,6 +448,8 @@ def run_evaluation(
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n[Device] Using: {device}")
+    if fast_loader:
+        print("[Data] Fast DataLoader active: using native PyTorch transforms.")
     os.makedirs(output_dir, exist_ok=True)
 
     # -----------------------------------------------------------------------
@@ -457,7 +465,7 @@ def run_evaluation(
     # ClinicalImageFolder strictly enforces clinical severity ordering:
     # 0: No_DR, 1: Mild, 2: Moderate, 3: Severe, 4: Proliferative_DR
     # instead of torchvision's default alphabetical sort order.
-    test_dataset = ClinicalImageFolder(str(test_dir), transform=get_val_transforms())
+    test_dataset = ClinicalImageFolder(str(test_dir), transform=get_val_transforms(fast=fast_loader))
 
     # Visual confirmation of exact class-to-index mapping
     verify_class_mapping(test_dataset, "Test Set")
@@ -637,6 +645,10 @@ def parse_args() -> argparse.Namespace:
         "--gradcam-samples", type=int, default=3,
         help="Number of Grad-CAM sample images per class (default: 3).",
     )
+    parser.add_argument(
+        "--fast-loader", action="store_true",
+        help="Bypass CPU OpenCV HoughCircles in DataLoader for fast evaluation.",
+    )
     return parser.parse_args()
 
 
@@ -654,6 +666,7 @@ def main() -> None:
         num_workers=args.num_workers,
         generate_gradcam=not args.no_gradcam,
         gradcam_samples=args.gradcam_samples,
+        fast_loader=args.fast_loader,
     )
     print(f"\n[Done] All evaluation outputs saved to: {args.output_dir}\n")
 
