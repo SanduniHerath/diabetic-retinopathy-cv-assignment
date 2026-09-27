@@ -54,36 +54,42 @@ Iqbal et al. (2024) [arXiv:2408.06784](https://arxiv.org/abs/2408.06784) use **h
 
 ---
 
-## Class Balancing Multipliers & Reasoning
+## Class Balancing: Dynamic Multiplier Approach (Current)
 
-### Training Set Before Augmentation (`data/split/train/`)
+> **Note:** The augmentation pipeline was updated from a hardcoded fixed-multiplier scheme to a **fully dynamic, self-correcting formula** after the EyePACS supplementary data addition changed live training-set class counts. The old fixed multipliers (No_DR×1, Mild×5, Moderate×2, Severe×9, Proliferative_DR×6) were calculated based on the original APTOS-only training counts and are now outdated.
 
-| Label | Class | Count | % | Imbalance |
-|:-----:|:------|------:|--:|----------:|
-| 0 | No_DR | 1,264 | 49.3% | 9.4× dominant |
-| 1 | Mild | 259 | 10.1% | — |
-| 2 | Moderate | 699 | 27.3% | — |
-| 3 | Severe | 135 | 5.3% | rarest |
-| 4 | Proliferative_DR | 206 | 8.0% | — |
-| — | **Total** | **2,563** | **100%** | **Imbalance: 9.36×** |
+### Dynamic Multiplier Formula
 
-### Per-Class Multipliers Applied
+```python
+multiplier(cls) = max(1, round(target_count / live_count(cls)))
+```
 
-| Class | Train Count | Multiplier | After | Reasoning |
-|:------|:-----------:|:----------:|------:|:----------|
-| No_DR | 1,264 | **×1** | 1,264 | Already dominant; augmenting would worsen balance in reverse |
-| Mild | 259 | **×5** | 1,295 | 2nd rarest; moderate boost needed |
-| Moderate | 699 | **×2** | 1,398 | Mid-range; modest boost suffices |
-| Severe | 135 | **×9** | 1,215 | Rarest class; highest clinical risk (delayed treatment risks blindness) |
-| Proliferative_DR | 206 | **×6** | 1,236 | 3rd rarest minority class |
-| **Total** | **2,563** | | **6,408** | **Imbalance reduced from 9.36× → 1.15×** |
+Where `target_count` defaults to **1,500** (overridable via `--target N`) and `live_count(cls)` is determined by a **fresh directory scan** of `data/split/train/` at script runtime — never from a cached file or hardcoded dict. This makes the pipeline self-correcting: any future dataset change is automatically reflected the next time the script runs.
 
-### Clinical Justification for Severe (×9)
+### Computed Multipliers (Post-EyePACS Training Set)
 
-Severe DR (Grade 3) receives the highest multiplier because:
-1. It is the **rarest class** in the training partition (135 images after split).
-2. A false-negative prediction (classifying Severe as Mild or No_DR) in a clinical deployment would **delay treatment** and risk preventable blindness. The asymmetric clinical cost means the model must be especially sensitive to Grade 3 features, which requires adequate training representation.
-3. The next phase — class-weighted loss functions — will further complement this approach, but cannot compensate if the model has never seen enough Severe examples.
+With the final training counts after EyePACS supplementation (Severe: 635, Proliferative_DR: 706):
+
+| Class | Live Count | Formula | Multiplier | Projected Total |
+|:------|:----------:|:-------:|:----------:|:---------------:|
+| No_DR | 1,264 | max(1, round(1500/1264)) | **×1** | 1,264 |
+| Mild | 759 | max(1, round(1500/759)) | **×2** | 1,518 |
+| Moderate | 699 | max(1, round(1500/699)) | **×2** | 1,398 |
+| Severe | 635 | max(1, round(1500/635)) | **×2** | 1,270 |
+| Proliferative_DR | 706 | max(1, round(1500/706)) | **×2** | 1,412 |
+| **Total** | **4,063** | | | **6,862** |
+
+**Resulting imbalance: 1.20×** (reduced from the pre-EyePACS baseline of 9.36×)
+
+### Why Dynamic Multipliers Are Superior to Fixed Ones
+
+1. **Self-correcting:** Fixed multipliers calculated for an old dataset become dangerously wrong when training data changes. With the EyePACS addition, applying the old Severe×9 would have produced 5,715 Severe images — making it the *largest* class and worsening imbalance to 4.52× rather than correcting it.
+2. **Transparent:** The script prints the live counts, computed multipliers, and projected imbalance ratio to stdout before any processing, so the operator can verify correctness before committing.
+3. **Reproducible:** Because the formula is deterministic given a fixed target and live counts, re-running the script after any dataset change produces a predictable, inspectable result.
+
+### Clinical Justification for ×1 Floor
+
+Classes already at or above the target (No_DR with 1,264 vs. target 1,500) receive a multiplier of **×1**, meaning they are copied as-is without synthetic augmentation. This prevents dominant-class inflation while allowing minority classes to be boosted proportionally.
 
 ---
 
@@ -105,15 +111,20 @@ Re-running `python src/augmentation.py` with `RANDOM_SEED = 42` always produces 
 
 ```
 data/split/
-    train/                      # 2,563 original training images  [READ ONLY]
-    train_augmented/            # 6,408 balanced images  [OUTPUT]
-        No_DR/         (1,264 originals)
-        Mild/          (1,295 = 259 originals + 1,036 augmented)
-        Moderate/      (1,398 = 699 originals + 699 augmented)
-        Severe/        (1,215 = 135 originals + 1,080 augmented)
-        Proliferative_DR/ (1,236 = 206 originals + 1,030 augmented)
-    val/                        # 550 original images  [UNTOUCHED]
-    test/                       # 549 original images  [UNTOUCHED]
+    train/                      # Training images after EyePACS supplementation [READ ONLY]
+        No_DR/         (1,264 images — APTOS only)
+        Mild/          (759 images — APTOS only, after Mild EyePACS rollback)
+        Moderate/      (699 images — APTOS only)
+        Severe/        (635 images — 135 APTOS + 500 EyePACS)
+        Proliferative_DR/ (706 images — 206 APTOS + 500 EyePACS)
+    train_augmented/            # 6,862 balanced images  [OUTPUT]
+        No_DR/         (1,264 = 1,264 originals × 1)
+        Mild/          (1,518 = 759 originals × 2)
+        Moderate/      (1,398 = 699 originals × 2)
+        Severe/        (1,270 = 635 originals × 2)
+        Proliferative_DR/ (1,412 = 706 originals × 2)
+    val/                        # 550 original APTOS images  [UNTOUCHED]
+    test/                       # 549 original APTOS images  [UNTOUCHED]
 ```
 
 ---
