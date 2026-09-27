@@ -108,29 +108,19 @@ AUGMENTATION TECHNIQUES -- CLINICAL JUSTIFICATION
 
 CLASS BALANCING STRATEGY
 -------------------------
-The APTOS 2019 *training split* (70% of 3,662 = 2,563 images) has the
-following imbalance:
-
-  No_DR: 1,264 images (49.3%)  -- dominant class
-  Mild:    259 images (10.1%)
-  Moderate: 699 images (27.3%)
-  Severe:  135 images ( 5.3%)  -- rarest class
-  Proliferative_DR: 206 images ( 8.0%)
-
-  Imbalance ratio (dominant / rarest): ~9.4x
-
 Differential augmentation multipliers are applied per class to bring
-counts close to ~1,200+ images each, reducing the effective imbalance:
+counts close to parity, reducing the effective imbalance.
 
-  Class            | Train  | Mult | After
-  No_DR            | 1,264  |  x1  | 1,264  (dominant -- no inflation)
-  Mild             |   259  |  x5  | 1,295
-  Moderate         |   699  |  x2  | 1,398
-  Severe           |   135  |  x9  | 1,215  (rarest, highest clinical risk)
-  Proliferative_DR |   206  |  x6  | 1,236
+The exact per-class counts in data/split/train/ are determined at
+runtime by scanning the folder directly, so the reported BEFORE table
+always reflects the *actual* files on disk (not a hardcoded snapshot).
 
-  Total train set after balancing: 6,408 images
-  Reduced imbalance ratio: ~1.15x  (vs 9.4x before)
+  Class            | Mult
+  No_DR            |  x1  (dominant -- no inflation)
+  Mild             |  x5
+  Moderate         |  x2
+  Severe           |  x9  (highest clinical risk)
+  Proliferative_DR |  x6
 
 Severe receives the highest multiplier (x9) because:
   (a) It is the rarest class in the training split (135 images).
@@ -196,14 +186,10 @@ DEFAULT_REPORT_DIR = os.path.join("reports", "augmentation_examples")
 
 CLASSES = ["No_DR", "Mild", "Moderate", "Severe", "Proliferative_DR"]
 
-# Exact counts from data/split/train/ (produced by split_dataset.py with seed=42)
-TRAIN_COUNTS: Dict[str, int] = {
-    "No_DR": 1264,
-    "Mild": 259,
-    "Moderate": 699,
-    "Severe": 135,
-    "Proliferative_DR": 206,
-}
+# NOTE: per-class counts are computed at runtime by scanning the actual
+# data/split/train/<class>/ folders (see count_class_images() below).
+# There is NO hardcoded TRAIN_COUNTS dict -- that was the source of stale
+# numbers when new images were added via EyePACS ingestion.
 
 # Per-class augmentation multipliers.
 # multiplier=1 means only originals are kept (no augmented copies added).
@@ -211,11 +197,11 @@ TRAIN_COUNTS: Dict[str, int] = {
 # so the final count = original_count * N.
 #
 # Reasoning:
-#   No_DR (x1): Already dominant (1,264). Augmenting would worsen imbalance.
-#   Mild (x5):  259 * 5 = 1,295. 2nd rarest; needs substantial boost.
-#   Moderate (x2): 699 * 2 = 1,398. Mid-range; modest boost suffices.
-#   Severe (x9): 135 * 9 = 1,215. Rarest class; highest clinical risk.
-#   Proliferative_DR (x6): 206 * 6 = 1,236. 3rd rarest.
+#   No_DR (x1): Already dominant. Augmenting would worsen imbalance.
+#   Mild (x5):  2nd rarest; needs substantial boost.
+#   Moderate (x2): Mid-range; modest boost suffices.
+#   Severe (x9): Rarest class; highest clinical risk.
+#   Proliferative_DR (x6): 3rd rarest.
 MULTIPLIERS: Dict[str, int] = {
     "No_DR": 1,
     "Mild": 5,
@@ -331,6 +317,46 @@ def augment_image(img_bgr: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         out = cv2.GaussianBlur(out, BLUR_KERNEL, 0)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# FILESYSTEM SCAN HELPER
+# ---------------------------------------------------------------------------
+
+
+def count_class_images(input_dir: str) -> Dict[str, int]:
+    """
+    Scan *input_dir* on disk and return the actual number of image files
+    (*.png / *.jpg / *.jpeg) in each class sub-folder.
+
+    This always reflects what is physically present on disk at the moment
+    the script runs -- it never relies on any cached manifest or hardcoded
+    constant, so it stays correct after EyePACS ingestion or any other
+    dataset update.
+
+    Parameters
+    ----------
+    input_dir : str
+        Root training split directory (e.g. ``data/split/train/``).
+        Expected layout:  ``<input_dir>/<ClassName>/*.png``
+
+    Returns
+    -------
+    Dict[str, int]
+        Mapping of class name -> image file count.
+        Classes that have no sub-folder get count 0.
+    """
+    counts: Dict[str, int] = {}
+    for cls in CLASSES:
+        cls_dir = os.path.join(input_dir, cls)
+        if os.path.isdir(cls_dir):
+            counts[cls] = sum(
+                1 for f in os.listdir(cls_dir)
+                if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            )
+        else:
+            counts[cls] = 0
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +632,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     n_samples: int = args.samples
 
     # Safety check: refuse to write into val/ or test/
+    # (abs_input is also used below for the verification block)
     abs_input = os.path.abspath(input_dir)
     for forbidden in ["val", "test"]:
         forbidden_path = os.path.abspath(
@@ -620,13 +647,35 @@ def run_pipeline(args: argparse.Namespace) -> None:
             )
             sys.exit(1)
 
-    # Compute before / after distributions
-    before_counts = {cls: TRAIN_COUNTS[cls] for cls in CLASSES}
+    # ------------------------------------------------------------------
+    # Compute before / after distributions by SCANNING THE FOLDER LIVE.
+    # Never read from a hardcoded constant -- that caused stale numbers.
+    # ------------------------------------------------------------------
+    before_counts = count_class_images(input_dir)
     after_counts = {
-        cls: TRAIN_COUNTS[cls] * MULTIPLIERS[cls] for cls in CLASSES
+        cls: before_counts[cls] * MULTIPLIERS[cls] for cls in CLASSES
     }
 
-    # Print before table
+    # Filesystem verification block -- mirrors 'ls <class_dir> | wc -l'
+    # so callers can confirm the reported count matches actual disk state.
+    abs_input = os.path.abspath(input_dir)  # re-use later for safety check
+    print()
+    print("=" * 70)
+    print("  FILESYSTEM VERIFICATION  (live scan of", abs_input, ")")
+    print("  Equivalent to:  ls <class_dir>/ | wc -l  for each class")
+    print("=" * 70)
+    print(f"  {'Class':<20} {'Files on disk':>14}")
+    print(f"  {'-'*20} {'-'*14}")
+    for cls in CLASSES:
+        cls_dir = os.path.join(input_dir, cls)
+        n = before_counts[cls]
+        print(f"  {cls:<20} {n:>14,}")
+    print(f"  {'-'*20} {'-'*14}")
+    print(f"  {'TOTAL':<20} {sum(before_counts.values()):>14,}")
+    print("=" * 70)
+    print()
+
+    # Print before table (counts come from the live scan above)
     print_distribution_table(
         before_counts, "TRAINING SET -- BEFORE AUGMENTATION (data/split/train/)"
     )
