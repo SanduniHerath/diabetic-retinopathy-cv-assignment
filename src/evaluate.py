@@ -435,6 +435,7 @@ def run_evaluation(
     num_workers: int = 2,
     generate_gradcam: bool = True,
     gradcam_samples: int = 3,
+    fast_loader: bool = False,
 ) -> Dict[str, Any]:
     """
     Loads the best checkpoint, runs inference on the test split, and generates
@@ -442,6 +443,8 @@ def run_evaluation(
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n[Device] Using: {device}")
+    if fast_loader:
+        print("[Data] Fast DataLoader active: using native PyTorch transforms.")
     os.makedirs(output_dir, exist_ok=True)
 
     # -----------------------------------------------------------------------
@@ -457,7 +460,7 @@ def run_evaluation(
     # ClinicalImageFolder strictly enforces clinical severity ordering:
     # 0: No_DR, 1: Mild, 2: Moderate, 3: Severe, 4: Proliferative_DR
     # instead of torchvision's default alphabetical sort order.
-    test_dataset = ClinicalImageFolder(str(test_dir), transform=get_val_transforms())
+    test_dataset = ClinicalImageFolder(str(test_dir), transform=get_val_transforms(fast=fast_loader))
 
     # Visual confirmation of exact class-to-index mapping
     verify_class_mapping(test_dataset, "Test Set")
@@ -637,6 +640,10 @@ def parse_args() -> argparse.Namespace:
         "--gradcam-samples", type=int, default=3,
         help="Number of Grad-CAM sample images per class (default: 3).",
     )
+    parser.add_argument(
+        "--fast-loader", action="store_true",
+        help="Bypass CPU OpenCV HoughCircles in DataLoader for fast evaluation.",
+    )
     return parser.parse_args()
 
 
@@ -654,6 +661,7 @@ def main() -> None:
         num_workers=args.num_workers,
         generate_gradcam=not args.no_gradcam,
         gradcam_samples=args.gradcam_samples,
+        fast_loader=args.fast_loader,
     )
     print(f"\n[Done] All evaluation outputs saved to: {args.output_dir}\n")
 
