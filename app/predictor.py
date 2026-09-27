@@ -407,45 +407,33 @@ def get_real_model():
 
 
 # ---------------------------------------------------------------------------
-# Preprocessing Pipeline (Phase 2 - Matching Training Exactly)
+# Preprocessing Pipeline (Matching Training Validation Pipeline Exactly)
 # ---------------------------------------------------------------------------
 def preprocess_fundus_image(pil_img: Image.Image) -> Tuple[Any, np.ndarray]:
     """
-    Applies the full Phase 2 reproducible preprocessing pipeline from src/preprocessing.py:
-      Step 1: Ben Graham circular crop (cv2.HoughCircles disc isolation, CROP_SCALE=0.9)
-      Step 2: CLAHE on L-channel (clip=2.0, tileGridSize=8x8)
-      Step 3: Gaussian blur noise removal (kernel=3x3, sigma=0)
-      Step 4: Unsharp masking edge enhancement (sigma=10, amount=1.5)
-      Step 5: 224x224 resize & ImageNet normalisation (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    Applies the exact validation preprocessing pipeline used during model training:
+      1. Resize to (224, 224) with bicubic interpolation
+      2. CenterCrop(224)
+      3. PyTorch ToTensor() [0, 1]
+      4. ImageNet normalization: mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
 
     Returns:
       tensor: (1, 3, 224, 224) PyTorch float tensor ready for forward pass
-      rgb_224: (224, 224, 3) uint8 array of preprocessed fundus image
+      rgb_224: (224, 224, 3) uint8 array of retinal fundus image
     """
     import torch
-    from preprocessing import circular_crop, apply_clahe, apply_noise_removal, apply_unsharp_mask
+    import torchvision.transforms as transforms
 
-    img_bgr = cv2.cvtColor(np.array(pil_img.convert("RGB"), dtype=np.uint8), cv2.COLOR_RGB2BGR)
-    h, w = img_bgr.shape[:2]
+    val_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
 
-    # Downscale high-resolution images to 512px first, exactly matching PreprocessingTransform in training
-    if max(h, w) > 512:
-        scale = 512.0 / max(h, w)
-        img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-
-    crop = circular_crop(img_bgr)
-    clahe = apply_clahe(crop)
-    denoised = apply_noise_removal(clahe)
-    sharpened = apply_unsharp_mask(denoised)
-
-    resized = cv2.resize(sharpened, (224, 224), interpolation=cv2.INTER_AREA)
-    rgb_224 = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-
-    # ImageNet channel-wise normalization
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    norm = (rgb_224.astype(np.float32) / 255.0 - mean) / std
-    tensor = torch.from_numpy(norm).permute(2, 0, 1).unsqueeze(0).float()
+    rgb_pil = pil_img.convert("RGB")
+    tensor = val_transform(rgb_pil).unsqueeze(0).float()
+    rgb_224 = np.array(rgb_pil.resize((224, 224)), dtype=np.uint8)
     return tensor, rgb_224
 
 

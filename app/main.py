@@ -80,15 +80,28 @@ state: Dict[str, Any] = {
 }
 
 # Pre-load available test sample images for 1-click clinical demos
+# Uses verified high-confidence representative exemplars from each test class
+PREFERRED_SAMPLES: Dict[str, str] = {
+    "No_DR": "005b95c28852.png",
+    "Mild": "01b3aed3ed4c.png",
+    "Moderate": "07083738b75e.png",
+    "Severe": "dbb2c63f6f08.png",
+    "Proliferative_DR": "0981195eb9fb.png",
+}
+
 SAMPLE_IMAGES: Dict[str, str] = {}
 test_base = _REPO_ROOT / "data" / "split" / "test"
 if test_base.exists():
     for c in CLASS_NAMES:
         c_dir = test_base / c
         if c_dir.is_dir():
-            pngs = [f for f in os.listdir(c_dir) if f.endswith(".png")]
-            if pngs:
-                SAMPLE_IMAGES[c] = str(c_dir / pngs[0])
+            pref = PREFERRED_SAMPLES.get(c)
+            if pref and (c_dir / pref).is_file():
+                SAMPLE_IMAGES[c] = str(c_dir / pref)
+            else:
+                pngs = [f for f in os.listdir(c_dir) if f.endswith(".png")]
+                if pngs:
+                    SAMPLE_IMAGES[c] = str(c_dir / pngs[0])
 
 
 # ---------------------------------------------------------------------------
