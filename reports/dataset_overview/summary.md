@@ -58,6 +58,40 @@ Running `src/organize_dataset.py` yields the following distribution:
 
 ---
 
+## Stratified Train / Validation / Test Dataset Split (`src/split_dataset.py`)
+
+To guarantee unbiased model evaluation, valid hyperparameter tuning, and zero data leakage, the organised dataset was partitioned into **Train (70%)**, **Validation (15%)**, and **Test (15%)** sets using stratified random sampling (`RANDOM_SEED = 42`).
+
+### Methodological & Clinical Justification
+
+1. **Stratification Under Severe Imbalance**:
+   Given that No_DR constitutes 49.3% while Severe constitutes only 5.3% of the dataset, an unstratified split risks significant sampling bias where minority stages are severely underrepresented or omitted from test or validation sets. Stratified splitting enforces identical class proportions across all three subsets.
+2. **Distinct Partition Roles**:
+   - **Training Set (70% — 2,563 images)**: Provides diverse retinal fundus representations for feature learning and acts as the foundation for subsequent targeted data augmentation (Phase 3).
+   - **Validation Set (15% — 550 images)**: Serves as an independent checkpointing set for hyperparameter tuning, learning rate scheduling, and early stopping to prevent overfitting.
+   - **Test Set (15% — 549 images)**: Acts as a strictly held-out clinical gold standard evaluated only once at the conclusion of training, simulating real-world patient screening.
+3. **Strict Zero-Leakage Guarantee**:
+   Partition integrity is mathematically enforced using set-intersection assertions:
+   $$\text{Train} \cap \text{Val} = \emptyset, \quad \text{Train} \cap \text{Test} = \emptyset, \quad \text{Val} \cap \text{Test} = \emptyset$$
+   All 3,662 unique fundus images are mutually exclusively accounted for ($2,563 + 550 + 549 = 3,662$).
+
+### Exact Per-Class Split Counts
+
+| Label | Class Name | Total Count | Train (70%) | Validation (15%) | Test (15%) | Train % | Val % | Test % |
+|:-----:|:-----------|:-----------:|:-----------:|:----------------:|:----------:|:-------:|:-----:|:------:|
+| 0 | No_DR | 1,805 | 1,264 | 271 | 270 | 70.0% | 15.0% | 15.0% |
+| 1 | Mild | 370 | 259 | 56 | 55 | 70.0% | 15.1% | 14.9% |
+| 2 | Moderate | 999 | 699 | 150 | 150 | 70.0% | 15.0% | 15.0% |
+| 3 | Severe | 193 | 135 | 29 | 29 | 69.9% | 15.0% | 15.0% |
+| 4 | Proliferative_DR | 295 | 206 | 44 | 45 | 69.8% | 14.9% | 15.3% |
+| **—** | **Total** | **3,662** | **2,563** | **550** | **549** | **70.0%** | **15.0%** | **15.0%** |
+
+![Stratified Split Distribution](split_distribution.png)
+
+An exhaustive split manifest mapping each anonymised patient image (`id_code`) to its diagnosis and assigned split is preserved in [`reports/dataset_overview/split_manifest.csv`](split_manifest.csv).
+
+---
+
 ## Sample Images Per Class
 
 The sample montage (`sample_montage.png`) shows 3 representative fundus photographs from each DR stage.  Key visual differences:
@@ -85,6 +119,46 @@ The sample montage (`sample_montage.png`) shows 3 representative fundus photogra
 5. **Deployment Risk**: Misclassifying a **Severe** or **Proliferative** case as **No_DR** could delay treatment and cause preventable blindness.  Any clinical deployment must include a human-in-the-loop review step and should *not* rely solely on automated predictions.
 
 6. **Class Imbalance as an Ethical Issue**: An imbalanced model might perform well on average but fail disproportionately on minority classes — the very stages that are most clinically urgent.  Robust evaluation must be reported *per class* (precision, recall, F1 per stage), not just overall accuracy.
+
+---
+
+## EyePACS Supplementary Data Addition (Phase 4 — Training Set Only)
+
+### What Was Added and Why
+
+Following the initial APTOS-only split, a targeted supplementary ingestion step was performed to address the severe under-representation of minority DR grades in the training partition. Images from the **EyePACS** public dataset (Kaggle EyePACS Diabetic Retinopathy Detection challenge) were selectively added **exclusively to `data/split/train/`**. The validation and test sets were **not touched under any circumstances**.
+
+### Supplementary Ingestion History & Planned Next Steps
+
+| Stage | Classes Supplemented | Status & Details |
+|:------|:---------------------|:-----------------|
+| **EyePACS supplementation** | Mild (Grade 1), Severe (Grade 3), Proliferative_DR (Grade 4) | Ingested to address severe minority class under-representation in APTOS training split (~500 samples per class) |
+| **Mild rollback** | Mild images removal | **Planned future work** — Post-evaluation revealed domain shift causing Mild F1 regression; removing Mild EyePACS and re-evaluating is scheduled as the next step (see `reports/training/summary.md` §4) |
+| **Current training state** | Mild + Severe + Proliferative_DR supplemented | Current trained model reflects training set with Mild, Severe, and Proliferative_DR EyePACS data |
+
+### Training Set Counts with EyePACS Addition (Current State)
+
+| Label | Class | APTOS-only (original) | Current (with EyePACS) |
+|:-----:|:------|:---------------------:|:----------------------:|
+| 0 | No_DR | 1,264 | 1,264 (unchanged) |
+| 1 | Mild | 259 | **759** (+500 EyePACS; rollback planned) |
+| 2 | Moderate | 699 | 699 (unchanged) |
+| 3 | Severe | 135 | **635** (+500 EyePACS) |
+| 4 | Proliferative_DR | 206 | **706** (+500 EyePACS) |
+
+### Why the Validation and Test Sets Were Never Modified
+
+This separation is a fundamental requirement for valid evaluation, not merely a best practice:
+
+1. **Evaluation validity:** The validation and test sets are used to measure how well the model generalises to *new, unseen patient data*. If EyePACS images were added to those sets, they would no longer represent the same data distribution as APTOS images on which the model is ultimately evaluated. Accuracy scores would reflect performance on a mixed-distribution holdout that does not correspond to any real-world deployment scenario.
+
+2. **No domain leakage:** EyePACS images originate from a different camera ecosystem, different geographic population, and slightly different labelling protocol than APTOS. Mixing them into validation or test sets would make it impossible to attribute differences in metrics to genuine model improvement vs. distributional shift in the evaluation set.
+
+3. **Clinical credibility:** The test set (`data/split/test/`) — consisting entirely of **549 original APTOS images** — provides a clinically interpretable gold standard. All reported metrics (80.33% accuracy, QWK = 0.88) reflect performance on authentic APTOS retinal photographs, not a hybrid set.
+
+4. **Reproducibility:** Because validation and test splits are fixed and pure, any researcher who clones this repository and re-trains the model will evaluate against the identical holdout, ensuring fair comparison.
+
+> **Summary:** The EyePACS data serves exclusively as *additional training signal* for the most under-represented clinical grades. It does not affect what the model is evaluated against.
 
 ---
 
