@@ -125,7 +125,7 @@ class GradCAM:
 
         self.model.zero_grad()
         score = logits[0, target_class]
-        score.backward(retain_graph=True)
+        score.backward(retain_graph=False)
 
         if self.gradients is None or self.activations is None:
             raise RuntimeError("Grad-CAM hooks failed to capture gradients or activations.")
@@ -148,6 +148,11 @@ class GradCAM:
         )
 
         cam_np = cam.squeeze().cpu().numpy()
+
+        # Free memory immediately
+        self.gradients = None
+        self.activations = None
+        del tensor_var, logits, score, weights, cam
 
         # Min-max normalization
         c_min, c_max = float(cam_np.min()), float(cam_np.max())

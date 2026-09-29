@@ -14,6 +14,7 @@ Author: Sanduni Herath
 Repository: https://github.com/SanduniHerath/diabetic-retinopathy-cv-assignment
 """
 
+import gc
 import io
 import os
 import sys
@@ -24,6 +25,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from PIL import Image
+
+# Cap CPU threading to prevent massive thread pool allocation in cloud memory
+try:
+    import torch
+    torch.set_num_threads(1)
+except Exception:
+    pass
 
 # Portable import setup for repo root and src/
 _APP_DIR = Path(__file__).resolve().parent
@@ -512,6 +520,9 @@ def predict_image(
     """
     # 1. Decode image bytes to PIL and NumPy RGB
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    # Downscale large fundus images immediately to keep RAM strictly under 512MB on cloud hosts
+    if max(pil_image.size) > 600:
+        pil_image.thumbnail((600, 600), Image.Resampling.BILINEAR)
     np_image_rgb = np.array(pil_image)
 
     # 2. Check if real model should be used
@@ -554,6 +565,10 @@ def predict_image(
             gradcam_rgb = cv2.addWeighted(np_image_rgb, 0.60, heatmap_rgb, 0.40, 0)
             engine_mode = "PyTorch Deep CNN (EfficientNet-B0 Staged Fine-Tuned)"
             inference_success = True
+
+            # Free intermediate heatmap memory
+            del tensor, logits, heatmap_raw, heatmap_res, heatmap_col, heatmap_rgb
+            gc.collect()
         except Exception as e:
             print(f"[Predictor] Fallback to mock inference due to error: {e}")
             inference_success = False
