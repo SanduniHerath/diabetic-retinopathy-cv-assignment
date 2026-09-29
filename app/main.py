@@ -850,15 +850,18 @@ refresh_results_view()
 # Application Entry Point
 # ---------------------------------------------------------------------------
 if __name__ in {"__main__", "__mp_main__"}:
+    host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
     print(f"\n========================================================")
     print(f" RetinaScan AI Clinical Decision Support System")
-    print(f" Running on http://127.0.0.1:{port}")
+    print(f" Running on http://{host}:{port}")
     print(f" Regulatory Status: Investigational Use")
     print(f"========================================================\n")
     ui.run(
         title="RetinaScan AI — Clinical DR Triage System",
+        host=host,
         port=port,
         reload=False,
         show=False,
     )
+
