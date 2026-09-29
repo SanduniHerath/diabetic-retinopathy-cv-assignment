@@ -1,0 +1,5 @@
+run_tag,stage1_lr,stage2_lr,unfreeze_blocks,weight_decay,best_val_loss,best_epoch,total_time_s
+run01_s1lr1e-03_s2lr1e-04_ub3,0.001,0.0001,3,0.0001,0.491085,17,4824
+run02_s1lr5e-04_s2lr5e-05_ub3,0.0005,5e-05,3,0.0001,0.503159,20,4868
+run03_s1lr1e-03_s2lr1e-04_ub2,0.001,0.0001,2,0.0001,0.553766,17,4852
+run04_s1lr1e-03_s2lr1e-04_ub3,0.001,0.0001,3,1e-05,0.508935,14,4592
