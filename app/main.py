@@ -90,18 +90,28 @@ PREFERRED_SAMPLES: Dict[str, str] = {
 }
 
 SAMPLE_IMAGES: Dict[str, str] = {}
+samples_dir = _APP_DIR / "samples"
 test_base = _REPO_ROOT / "data" / "split" / "test"
-if test_base.exists():
-    for c in CLASS_NAMES:
+
+for c in CLASS_NAMES:
+    pref = PREFERRED_SAMPLES.get(c)
+    # 1. Prefer bundled sample in app/samples/
+    if samples_dir.is_dir():
+        if pref and (samples_dir / pref).is_file():
+            SAMPLE_IMAGES[c] = str(samples_dir / pref)
+        elif (samples_dir / f"{c}.png").is_file():
+            SAMPLE_IMAGES[c] = str(samples_dir / f"{c}.png")
+    # 2. Fall back to data/split/test/ if available
+    if c not in SAMPLE_IMAGES and test_base.exists():
         c_dir = test_base / c
         if c_dir.is_dir():
-            pref = PREFERRED_SAMPLES.get(c)
             if pref and (c_dir / pref).is_file():
                 SAMPLE_IMAGES[c] = str(c_dir / pref)
             else:
                 pngs = [f for f in os.listdir(c_dir) if f.endswith(".png")]
                 if pngs:
                     SAMPLE_IMAGES[c] = str(c_dir / pngs[0])
+
 
 
 # ---------------------------------------------------------------------------

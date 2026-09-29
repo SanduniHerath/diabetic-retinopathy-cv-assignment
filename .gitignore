@@ -32,11 +32,7 @@ venv.bak/
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*
 
-# Data & Datasets
-data/raw/*
-!data/raw/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
+# Data & Datasets (pipeline partitions images into data/split/)
 data/*
 !data/**/.gitkeep
 !data/.gitkeep
