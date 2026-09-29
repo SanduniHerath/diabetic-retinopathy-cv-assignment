@@ -1,5 +1,12 @@
 # Diabetic Retinopathy Stage Detection
-**Computer Vision Assignment — BSc (Hons) Computer Science, National Institute of Business Management**
+**Computer Vision Assignment — BSc (Hons) Computer Science, National Institute of Business Management (In Collaboration with Coventry University)**
+
+| Student Details | Value |
+|:---|:---|
+| **Student Name** | H.M.S.S Herath |
+| **Student Index Number** | COBSCCOMP242P-016 |
+| **Coventry ID** | 16114092 |
+| **Live Hosted Web Application** | [https://cobsccomp242p016-retinascan-ai.onrender.com/](https://cobsccomp242p016-retinascan-ai.onrender.com/) |
 
 A deep-learning pipeline that classifies **5 stages of diabetic retinopathy** from retinal fundus photographs using CNN architectures and transfer learning.
 
@@ -398,12 +405,16 @@ python src/train.py --data-root data/split --output-dir reports/training \
 
 ### Running the App
 
+#### Option A — Live Cloud Deployment (No Installation Needed)
+The application is hosted 24/7 on Render and can be accessed directly from any web browser:
+👉 **[https://cobsccomp242p016-retinascan-ai.onrender.com/](https://cobsccomp242p016-retinascan-ai.onrender.com/)**
+
+#### Option B — Running Locally
 ```bash
-# Launch the clinical interface (no dataset needed — bundled samples in app/samples/):
+# Launch the clinical interface locally (no dataset needed — bundled samples in app/samples/):
 python app/main.py
 ```
-
-Open your browser at **http://localhost:8080**
+Open your browser at **http://localhost:8080** (or `http://127.0.0.1:8080`).
 
 > **Regulatory Notice:** This application is an investigational research prototype. It is NOT an FDA, CE-mark, or MHRA cleared diagnostic device. All automated findings must be verified by a licensed ophthalmologist before clinical use.
 
