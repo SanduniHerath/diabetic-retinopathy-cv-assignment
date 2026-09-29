@@ -44,13 +44,15 @@ data/*
 
 # Model Checkpoints & Artifacts
 *.pth
+!models/best_model.pth
 *.pt
 *.h5
 *.keras
 *.ckpt
 *.onnx
 *.tflite
-models/
+models/*
+!models/best_model.pth
 checkpoints/
 saved_models/
 
