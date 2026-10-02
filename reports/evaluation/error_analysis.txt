@@ -5,30 +5,30 @@
 
 [1] OVERALL PERFORMANCE SUMMARY:
   Overall Accuracy   : 80.33%
-  Weighted F1-Score  : 0.7800
-  Macro F1-Score     : 0.5931
-  Quadratic Weighted Kappa (QWK): 0.8799
+  Weighted F1-Score  : 0.7890
+  Macro F1-Score     : 0.6114
+  Quadratic Weighted Kappa (QWK): 0.8835
 
 [2] PER-CLASS METRICS:
   Class                 Precision   Recall       F1   Support
   ---------------------------------------------------------
-  No_DR                    0.9435   0.9889   0.9656       270
-  Mild                     0.8571   0.2182   0.3478        55
-  Moderate                 0.6617   0.8867   0.7578       150
-  Severe                   0.3913   0.3103   0.3462        29
-  Proliferative_DR         0.7143   0.4444   0.5479        45
+  No_DR                    0.9336   0.9889   0.9604       270
+  Mild                     0.8095   0.3091   0.4474        55
+  Moderate                 0.7079   0.8400   0.7683       150
+  Severe                   0.3333   0.3793   0.3548        29
+  Proliferative_DR         0.6452   0.4444   0.5263        45
 
 [3] TOP MISCLASSIFICATION PAIRS (True -> Predicted):
-  Mild                   -> Moderate                   29 samples ( 52.7%)
-  Proliferative_DR       -> Moderate                   20 samples ( 44.4%)
-  Severe                 -> Moderate                   17 samples ( 58.6%)
-  Mild                   -> No_DR                      12 samples ( 21.8%)
-  Moderate               -> Severe                      9 samples (  6.0%)
-  Proliferative_DR       -> Severe                      5 samples ( 11.1%)
-  Moderate               -> No_DR                       4 samples (  2.7%)
-  Severe                 -> Proliferative_DR            3 samples ( 10.3%)
+  Mild                   -> Moderate                   22 samples ( 40.0%)
+  Proliferative_DR       -> Moderate                   15 samples ( 33.3%)
+  Severe                 -> Moderate                   13 samples ( 44.8%)
+  Mild                   -> No_DR                      13 samples ( 23.6%)
+  Moderate               -> Severe                     12 samples (  8.0%)
+  Proliferative_DR       -> Severe                     10 samples ( 22.2%)
+  Moderate               -> No_DR                       6 samples (  4.0%)
+  Severe                 -> Proliferative_DR            5 samples ( 17.2%)
   Moderate               -> Proliferative_DR            3 samples (  2.0%)
-  No_DR                  -> Moderate                    2 samples (  0.7%)
+  Moderate               -> Mild                        3 samples (  2.0%)
 
 [4] CLINICAL RISK DISCUSSION:
 

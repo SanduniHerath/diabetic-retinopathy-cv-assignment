@@ -365,10 +365,40 @@ _LOADED_DEVICE = None
 
 
 def get_checkpoint_path() -> Optional[Path]:
-    """Resolves the trained model checkpoint path, prioritizing /models/best_model.pth."""
+    """
+    Resolves the trained model checkpoint path, prioritizing /models/best_model.pth.
+    Searches:
+      1. Environment variable MODEL_CHECKPOINT_PATH (if set)
+      2. Explicit list in CHECKPOINT_PATHS
+      3. Any .pth in models/ (newest first)
+      4. Any best_model*.pth in reports/training/ (newest first)
+    """
+    # 0. Check custom env var
+    env_path = os.environ.get("MODEL_CHECKPOINT_PATH")
+    if env_path:
+        ep = Path(env_path)
+        if ep.is_file() and ep.stat().st_size > 1_000_000:
+            return ep
+
+    # 1. Check explicit standard paths
     for p in CHECKPOINT_PATHS:
         if p.is_file() and p.stat().st_size > 1_000_000:
             return p
+
+    # 2. Check models/ directory for any .pth file (newest first)
+    models_dir = _REPO_ROOT / "models"
+    if models_dir.is_dir():
+        pths = [p for p in models_dir.glob("*.pth") if p.stat().st_size > 1_000_000]
+        if pths:
+            return max(pths, key=lambda p: p.stat().st_mtime)
+
+    # 3. Check reports/training/ directory for any best_model*.pth file (newest first)
+    training_dir = _REPO_ROOT / "reports" / "training"
+    if training_dir.is_dir():
+        pths = [p for p in training_dir.glob("best_model*.pth") if p.stat().st_size > 1_000_000]
+        if pths:
+            return max(pths, key=lambda p: p.stat().st_mtime)
+
     return None
 
 
