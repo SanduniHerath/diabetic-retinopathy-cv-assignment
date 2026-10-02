@@ -206,6 +206,12 @@ CONTRAST_MAX: float = 1.15       # Maximum contrast multiplicative factor
 BLUR_PROB: float = 0.30          # Probability of applying Gaussian blur
 BLUR_KERNEL: Tuple[int, int] = (3, 3)  # Gaussian blur kernel size
 
+# Output spatial resolution for saved augmented images.
+# Downsampling to 256x256 using cv2.INTER_AREA prevents disk usage from ballooning
+# (up to 11GB+ at original resolution) while preserving ample spatial detail for
+# the 224x224 CNN input resolution at load time.
+AUG_OUTPUT_SIZE: Tuple[int, int] = (256, 256)
+
 
 # ---------------------------------------------------------------------------
 # CORE AUGMENTATION FUNCTION
@@ -559,6 +565,7 @@ def balance_class(
     rng: np.random.Generator,
     report_dir: Optional[str] = None,
     n_demo_samples: int = 3,
+    output_size: Tuple[int, int] = AUG_OUTPUT_SIZE,
     dry_run: bool = False,
 ) -> int:
     """
@@ -577,6 +584,7 @@ def balance_class(
     rng            : Seeded generator for reproducible augmentation.
     report_dir     : If provided, demo strips for n_demo_samples images saved here.
     n_demo_samples : Number of demo-strip images to save per class.
+    output_size    : (width, height) resolution for saved augmented images (default 256x256).
     dry_run        : If True, do not write any files to disk.
 
     Returns
@@ -631,6 +639,8 @@ def balance_class(
                 if img is None:
                     continue
                 aug = augment_image(img, rng)
+                # Downsample to output_size (default 256x256) via INTER_AREA to prevent disk ballooning
+                aug = cv2.resize(aug, output_size, interpolation=cv2.INTER_AREA)
                 aug_name = f"{stem}_aug{copy_idx:02d}{ext}"
                 cv2.imwrite(os.path.join(dst_dir, aug_name), aug)
             total_written += 1
@@ -752,6 +762,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     rng = np.random.default_rng(RANDOM_SEED)
     t0 = time.time()
+    output_size_val = getattr(args, "output_size", 256)
+    output_size = (output_size_val, output_size_val)
 
     for cls in CLASSES:
         mult = multipliers[cls] if not report_only else 1
@@ -767,6 +779,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             rng=rng,
             report_dir=report_dir,
             n_demo_samples=n_samples,
+            output_size=output_size,
             dry_run=report_only,
         )
         print(f"{n_out:,} images")
@@ -853,6 +866,14 @@ def parse_args() -> argparse.Namespace:
             "Target number of images per class after augmentation. "
             "Multipliers are computed as max(1, round(target / live_count)). "
             "(default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--output-size", type=int, default=256,
+        metavar="PX",
+        help=(
+            "Output spatial resolution (width and height in px) for augmented "
+            "images before saving (default: %(default)s). Uses cv2.INTER_AREA."
         ),
     )
     return parser.parse_args()
